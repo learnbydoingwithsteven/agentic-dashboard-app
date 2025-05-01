@@ -1,0 +1,27 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: Flask Backend",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "flask",
+      "env": {
+        "FLASK_APP": "backend.src.main:app", // Points to your Flask app instance
+        "FLASK_DEBUG": "1", // Enable Flask debug mode
+        // IMPORTANT: Add your GROQ_API_KEY here or ensure it's set in your environment
+        // "GROQ_API_KEY": "your_groq_api_key" 
+      },
+      "args": [
+        "run",
+        "--no-debugger", // Use VS Code debugger, not Werkzeug's
+        "--no-reload",   // Disable auto-reloader for smoother debugging
+        "--port=5001"    // Run on the same port as before
+      ],
+      "jinja": true, // Enable Jinja template debugging if needed
+      "autoStartBrowser": false, // Don't automatically open a browser
+      "console": "integratedTerminal", // Show output in VS Code terminal
+      "stopOnEntry": false // Don't stop at the very first line of Python code
+    }
+  ]
+}
