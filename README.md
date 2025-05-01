@@ -250,7 +250,8 @@ Contributions are welcome! Here's how you can help:
 
 ## 📜 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the Apache License, Version 2.0 - see the LICENSE file for details.
+Copyright © 2025 Steven Wang. All rights reserved. Licensed under the Apache License, Version 2.0.
 
 ## 🙏 Acknowledgments
 
