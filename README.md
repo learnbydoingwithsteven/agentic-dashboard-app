@@ -3,7 +3,7 @@
 ## Tech Stack Choices
 
 ### 🚀 Vite
-- **Why Vite?** 
+- **Why Vite?**
   - **Instant Server Startup**: Leverages native ES modules for lightning-fast development server initialization.
   - **Hot Module Replacement (HMR)**: Updates components in real-time without full page reloads, improving developer productivity.
   - **Modern JS/TS Support**: Built-in out-of-the-box support for TypeScript, JSX, and CSS modules with no configuration required.
@@ -57,22 +57,28 @@ agentic_viz_app/
 - **AI-Driven Visualizations**:
   - **Automatic Insights**: Uses Autogen agents to analyze datasets and generate initial visualizations.
   - **Custom Prompts**: Allows users to define specific visualization requirements via natural language prompts.
+  - **Multiple LLM Support**: Works with both Groq API and local Ollama models.
 - **Interactive Dashboards**:
-  - Built with Vega-Lite for dynamic, user-friendly data exploration.
-  - Supports real-time updates and filtering based on user input.
+  - Built with Plotly for dynamic, user-friendly data exploration.
+  - Supports real-time updates and agent monitoring during visualization generation.
+  - Allows direct code execution for custom visualizations.
 - **Modular Architecture**:
   - Clear separation of frontend (React) and backend (Flask) for maintainability.
   - Backend handles data processing and API logic, while the frontend focuses on UI/UX.
+  - Secure code execution sandbox for running Python visualization code.
 - **Scalability**:
   - Designed to handle large datasets (e.g., the 2015 Friuli-Venezia-Giulia public finance dataset).
   - Easily extendable to support additional data sources or visualization types.
+  - Ability to cancel long-running agent jobs and reset the backend state.
 
 ## Setup and Running Locally
 
 ### Prerequisites
 - Python 3.10+
 - Node.js (with pnpm)
-- Groq API Key (Get one from [https://console.groq.com/](https://console.groq.com/))
+- Either:
+  - Groq API Key (Get one from [https://console.groq.com/](https://console.groq.com/))
+  - Ollama installed locally (Get it from [https://ollama.com/](https://ollama.com/))
 
 ### Backend Setup
 1. Navigate to the backend directory:
@@ -89,10 +95,15 @@ agentic_viz_app/
    ```bash
    pip install -r requirements.txt
    ```
-4. Set the Groq API key:
-   ```bash
-   export GROQ_API_KEY=your_api_key_here
-   ```
+4. Set up the model provider:
+   - For Groq:
+     ```bash
+     export GROQ_API_KEY=your_api_key_here
+     ```
+   - For Ollama:
+     - Make sure Ollama is running locally
+     - No environment variables needed - the app will detect Ollama automatically
+
 5. Run the backend server:
    ```bash
    python src/main.py

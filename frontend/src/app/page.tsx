@@ -7,9 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Terminal, Settings } from "lucide-react";
+import { Terminal, Settings, Code } from "lucide-react";
 import { ApiKeySettings, getApiKey, getUseOllama } from "@/components/ApiKeySettings";
 import { AgentConversationMonitor } from "@/components/AgentConversationMonitor";
+import { DebugVisualization } from "@/components/DebugVisualization";
+import { CodeVisualization } from "@/components/CodeVisualization";
 
 interface AdminLog {
   timestamp: string;
@@ -26,6 +28,14 @@ interface AdminLog {
 // Type for ECharts configurations
 type EChartsConfig = Record<string, any>;
 
+// Define the type for Plotly visualization
+interface PlotlyVisualization {
+  figure: any;
+  code: string;
+  output?: string;
+  error?: string;
+}
+
 
 // Backend API URL (adjust if your backend runs elsewhere)
 const API_BASE_URL = "http://localhost:5001/api"; // Backend runs on port 5001
@@ -35,6 +45,13 @@ export default function Home() {
   // Update state types to use the generic VegaSpec
   const [visualizations, setVisualizations] = useState<EChartsConfig[]>([]);
   const [promptedVisualizations, setPromptedVisualizations] = useState<EChartsConfig[]>([]);
+
+  // Plotly visualizations state
+  const [plotlyVisualizations, setPlotlyVisualizations] = useState<PlotlyVisualization[]>([]);
+  const [promptedPlotlyVisualizations, setPromptedPlotlyVisualizations] = useState<PlotlyVisualization[]>([]);
+  const [isExecutingCode, setIsExecutingCode] = useState<boolean>(false);
+  const [executingIndex, setExecutingIndex] = useState<number>(-1);
+
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingPrompted, setIsLoadingPrompted] = useState(false);
@@ -44,9 +61,10 @@ export default function Home() {
   // API key and Ollama state
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [useOllama, setUseOllama] = useState<boolean>(false);
-  // Separate state for analyst and coder models
+  // Separate state for all agent models
   const [selectedAnalystModel, setSelectedAnalystModel] = useState<string>('llama3-70b-8192');
   const [selectedCoderModel, setSelectedCoderModel] = useState<string>('llama3-70b-8192');
+  const [selectedManagerModel, setSelectedManagerModel] = useState<string>('llama3-70b-8192');
   const [availableModels, setAvailableModels] = useState<{[key: string]: string}>({});
   const [promptText, setPromptText] = useState('');
 
@@ -59,24 +77,39 @@ export default function Home() {
     }
   }, []);
 
+  // Prepare headers for API requests
+  const getRequestHeaders = useCallback((contentType?: string): Record<string, string> => {
+    const headers: Record<string, string> = {};
+
+    // Add content type if provided
+    if (contentType) {
+      headers['Content-Type'] = contentType;
+    }
+
+    // Add API key if available
+    if (apiKey) {
+      headers['X-API-KEY'] = apiKey;
+    }
+
+    // Always add USE-OLLAMA header with explicit true/false value
+    headers['USE-OLLAMA'] = useOllama ? 'true' : 'false';
+
+    return headers;
+  }, [apiKey, useOllama]);
+
+  // State to track if there are new logs
+  const [hasNewLogs, setHasNewLogs] = useState(false);
+
   // Fetch admin logs periodically or on demand
   const fetchAdminLogs = useCallback(() => {
     // Skip if no API key is available and not using Ollama
     if (!apiKey && !useOllama) return;
 
-    // Prepare headers
-    const headers: Record<string, string> = {};
-
-    if (apiKey) {
-      headers['X-API-KEY'] = apiKey;
-    }
-
-    if (useOllama) {
-      headers['USE-OLLAMA'] = 'true';
-    }
+    // Track the current log count to detect new logs
+    const currentLogCount = adminLogs.length;
 
     fetch(`${API_BASE_URL}/admin/logs`, {
-      headers
+      headers: getRequestHeaders()
     })
       .then(response => {
         if (!response.ok) {
@@ -86,11 +119,27 @@ export default function Home() {
       })
       .then(data => {
         // Ensure logs is an array
-        setAdminLogs(Array.isArray(data.logs) ? data.logs.reverse() : []); // Show newest first
+        const newLogs = Array.isArray(data.logs) ? data.logs.reverse() : []; // Show newest first
+
+        // Check if we have new logs
+        if (newLogs.length > currentLogCount) {
+          console.log(`New logs detected: ${newLogs.length - currentLogCount} new entries`);
+          setHasNewLogs(true);
+
+          // If the agent monitor is visible, update logs immediately
+          if (showAdminMonitor) {
+            setAdminLogs(newLogs);
+          }
+        } else if (showAdminMonitor) {
+          // If monitor is visible, always update logs even if no new ones
+          setAdminLogs(newLogs);
+        }
+
+        // Always update available models
         setAvailableModels(data.available_models || {});
       })
       .catch(error => console.error('Error fetching admin logs:', error));
-  }, [apiKey, useOllama]);
+  }, [apiKey, useOllama, getRequestHeaders, adminLogs.length, showAdminMonitor]);
 
 
   // Load API key and Ollama setting on component mount
@@ -109,12 +158,15 @@ export default function Home() {
 
   useEffect(() => {
     fetchAdminLogs(); // Fetch initial logs
-    // Optional: Fetch logs periodically
-    // const intervalId = setInterval(fetchAdminLogs, 10000); // Fetch every 10 seconds
-    // return () => clearInterval(intervalId); // Cleanup interval on unmount
+
+    // Set up polling for real-time log updates
+    const intervalId = setInterval(fetchAdminLogs, 3000); // Fetch every 3 seconds
+
+    // Cleanup interval on unmount
+    return () => clearInterval(intervalId);
   }, [fetchAdminLogs]);
 
-  const handleUpload = async () => {
+  const handleUpload = useCallback(async () => {
     if (!file) {
       setError("Please select a CSV file first.");
       return;
@@ -137,16 +189,8 @@ export default function Home() {
     }
 
     try {
-      // Prepare headers
-      const headers: Record<string, string> = {};
-
-      if (apiKey) {
-        headers['X-API-KEY'] = apiKey;
-      }
-
-      if (useOllama) {
-        headers['USE-OLLAMA'] = 'true';
-      }
+      // Get headers for the request
+      const headers = getRequestHeaders();
 
       const uploadResponse = await fetch(`${API_BASE_URL}/upload`, {
         method: 'POST',
@@ -161,7 +205,7 @@ export default function Home() {
       }
 
       // Fetch initial visualizations with selected models
-      const vizResponse = await fetch(`${API_BASE_URL}/visualizations?analyst_model=${selectedAnalystModel}&coder_model=${selectedCoderModel}`, {
+      const vizResponse = await fetch(`${API_BASE_URL}/visualizations?analyst_model=${selectedAnalystModel}&coder_model=${selectedCoderModel}&manager_model=${selectedManagerModel}`, {
         headers
       });
       const vizData = await vizResponse.json();
@@ -179,16 +223,39 @@ export default function Home() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [file, apiKey, useOllama, selectedAnalystModel, selectedCoderModel, selectedManagerModel, getRequestHeaders, fetchAdminLogs]);
 
   // Function to handle cancellation of initial analysis
-  const handleCancelUpload = () => {
-      setIsLoading(false); // Reset loading state
-      setError("Analysis cancelled by user."); // Provide feedback
-      // Note: This doesn't stop the backend process, only resets frontend state
+  const handleCancelUpload = async () => {
+    try {
+      // Call the backend to cancel the job
+      const response = await fetch(`${API_BASE_URL}/cancel`, {
+        method: 'POST',
+        headers: getRequestHeaders('application/json'),
+        body: JSON.stringify({})
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || `Cancellation failed with status: ${response.status}`);
+      }
+
+      // Reset frontend state
+      setIsLoading(false);
+      setError("Analysis cancelled by user. The agent will stop at the next opportunity.");
+
+      // Refresh logs to show cancellation
+      setTimeout(fetchAdminLogs, 1000);
+
+    } catch (err: any) {
+      console.error('Error cancelling job:', err);
+      setIsLoading(false);
+      setError(`Failed to cancel job: ${err.message}`);
+    }
   };
 
-  const handlePrompt = async () => {
+  const handlePrompt = useCallback(async () => {
     // Allow prompt even without file upload if backend handles default dataset
     if (!promptText.trim()) {
       setError("Please enter a prompt.");
@@ -208,18 +275,8 @@ export default function Home() {
     }
 
     try {
-      // Prepare headers
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json'
-      };
-
-      if (apiKey) {
-        headers['X-API-KEY'] = apiKey;
-      }
-
-      if (useOllama) {
-        headers['USE-OLLAMA'] = 'true';
-      }
+      // Get headers for the request with content type
+      const headers = getRequestHeaders('application/json');
 
       const response = await fetch(`${API_BASE_URL}/visualizations/prompt`, {
         method: 'POST',
@@ -227,7 +284,8 @@ export default function Home() {
         body: JSON.stringify({
           prompt: promptText,
           analyst_model_id: selectedAnalystModel, // Pass analyst model
-          coder_model_id: selectedCoderModel    // Pass coder model
+          coder_model_id: selectedCoderModel,    // Pass coder model
+          manager_model_id: selectedManagerModel  // Pass manager model
         })
       });
 
@@ -237,7 +295,21 @@ export default function Home() {
         throw new Error(data.error || `Generating prompted visualization failed with status: ${response.status}`);
       }
 
-      setPromptedVisualizations(data.visualizations || []);
+      // Check if we have Plotly visualizations
+      if (data.code_blocks && Array.isArray(data.code_blocks)) {
+        // We have Plotly visualizations
+        const plotlyViz = data.visualizations.map((figure: any, index: number) => ({
+          figure,
+          code: data.code_blocks[index] || '',
+          output: data.outputs && data.outputs[index] ? data.outputs[index] : '',
+          error: data.errors && data.errors[index] ? data.errors[index] : ''
+        }));
+        setPromptedPlotlyVisualizations(plotlyViz);
+      } else {
+        // We have ECharts visualizations (legacy)
+        setPromptedVisualizations(data.visualizations || []);
+      }
+
       fetchAdminLogs(); // Refresh logs after successful operation
 
     } catch (err: any) {
@@ -246,13 +318,146 @@ export default function Home() {
     } finally {
       setIsLoadingPrompted(false);
     }
+  }, [promptText, apiKey, useOllama, selectedAnalystModel, selectedCoderModel, selectedManagerModel, getRequestHeaders, fetchAdminLogs]);
+
+  // Function to handle cancellation of prompted generation
+  const handleCancelPrompt = async () => {
+    try {
+      // Call the backend to cancel the job
+      const response = await fetch(`${API_BASE_URL}/cancel`, {
+        method: 'POST',
+        headers: getRequestHeaders('application/json'),
+        body: JSON.stringify({})
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || `Cancellation failed with status: ${response.status}`);
+      }
+
+      // Reset frontend state
+      setIsLoadingPrompted(false);
+      setError("Generation cancelled by user. The agent will stop at the next opportunity.");
+
+      // Refresh logs to show cancellation
+      setTimeout(fetchAdminLogs, 1000);
+
+    } catch (err: any) {
+      console.error('Error cancelling job:', err);
+      setIsLoadingPrompted(false);
+      setError(`Failed to cancel job: ${err.message}`);
+    }
   };
 
-   // Function to handle cancellation of prompted generation
-   const handleCancelPrompt = () => {
-      setIsLoadingPrompted(false); // Reset loading state
-      setError("Generation cancelled by user."); // Provide feedback
-      // Note: This doesn't stop the backend process, only resets frontend state
+  // Function to reset the backend
+  const handleResetBackend = async () => {
+    if (!confirm("Are you sure you want to reset the backend? This will clear all logs and current jobs.")) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/reset`, {
+        method: 'POST',
+        headers: getRequestHeaders('application/json'),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        // Clear visualizations
+        setVisualizations([]);
+        setPromptedVisualizations([]);
+        setPlotlyVisualizations([]);
+        setPromptedPlotlyVisualizations([]);
+
+        // Reset loading states
+        setIsLoading(false);
+        setIsLoadingPrompted(false);
+        setIsExecutingCode(false);
+
+        // Clear error message
+        setError(null);
+
+        // Refresh logs
+        setAdminLogs([]);
+        fetchAdminLogs();
+
+        // Show success message
+        setError("Backend state has been reset successfully.");
+      } else {
+        setError(data.message || "Failed to reset backend");
+      }
+    } catch (err: any) {
+      console.error('Error resetting backend:', err);
+      setError(`Error resetting backend: ${err.message}`);
+    }
+  };
+
+  // Function to execute Python code
+  const handleExecuteCode = async (code: string, index: number) => {
+    setIsExecutingCode(true);
+    setExecutingIndex(index);
+    setError(null);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/execute_code`, {
+        method: 'POST',
+        headers: getRequestHeaders('application/json'),
+        body: JSON.stringify({ code })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        // Update the visualization at the specified index
+        if (index >= 0) {
+          // Check if this is a prompted visualization or a regular one
+          if (index < plotlyVisualizations.length) {
+            const updatedVisualizations = [...plotlyVisualizations];
+            updatedVisualizations[index] = {
+              figure: data.figure,
+              code: data.code,
+              output: data.output,
+              error: data.error
+            };
+            setPlotlyVisualizations(updatedVisualizations);
+          } else {
+            // It's a prompted visualization
+            const promptedIndex = index - plotlyVisualizations.length;
+            if (promptedIndex >= 0 && promptedIndex < promptedPlotlyVisualizations.length) {
+              const updatedVisualizations = [...promptedPlotlyVisualizations];
+              updatedVisualizations[promptedIndex] = {
+                figure: data.figure,
+                code: data.code,
+                output: data.output,
+                error: data.error
+              };
+              setPromptedPlotlyVisualizations(updatedVisualizations);
+            }
+          }
+        } else {
+          // Add as a new visualization
+          setPlotlyVisualizations([
+            ...plotlyVisualizations,
+            {
+              figure: data.figure,
+              code: data.code,
+              output: data.output,
+              error: data.error
+            }
+          ]);
+        }
+      } else {
+        setError(data.message || data.error || "Failed to execute code");
+      }
+    } catch (err: any) {
+      console.error('Error executing code:', err);
+      setError(`Error executing code: ${err.message}`);
+    } finally {
+      setIsExecutingCode(false);
+      setExecutingIndex(-1);
+    }
   };
 
   return (
@@ -275,7 +480,51 @@ export default function Home() {
                 onApiKeySaved={(newApiKey, newUseOllama) => {
                   setApiKey(newApiKey);
                   setUseOllama(newUseOllama);
-                  fetchAdminLogs(); // Refresh data with new settings
+
+                  // Force a direct fetch of available models with the new API key
+                  const headers: Record<string, string> = {};
+                  if (newApiKey) {
+                    headers['X-API-KEY'] = newApiKey;
+                  }
+                  // Always set USE-OLLAMA header with explicit true/false value
+                  headers['USE-OLLAMA'] = newUseOllama ? 'true' : 'false';
+
+                  console.log("Main component: Refreshing models with new API key...");
+                  fetch(`${API_BASE_URL}/check_api_key`, {
+                    method: 'GET',
+                    headers
+                  })
+                    .then(response => {
+                      console.log("API key validation status:", response.status);
+                      return response.json();
+                    })
+                    .then(data => {
+                      console.log("API key validation response:", data);
+
+                      if (data.available_models && Object.keys(data.available_models).length > 0) {
+                        console.log("Main component: Models updated successfully:", Object.keys(data.available_models).length);
+                        setAvailableModels(data.available_models);
+
+                        // Set default models based on what's available
+                        const firstModel = Object.keys(data.available_models)[0];
+                        console.log("Setting default model to:", firstModel);
+                        setSelectedAnalystModel(firstModel);
+                        setSelectedCoderModel(firstModel);
+                        setSelectedManagerModel(firstModel);
+                      } else {
+                        console.warn("No models found in the response or empty models object");
+                        // Try fetching admin logs as a fallback to get models
+                        fetchAdminLogs();
+                      }
+                    })
+                    .catch(error => {
+                      console.error("Error fetching models:", error);
+                      // Try fetching admin logs as a fallback
+                      fetchAdminLogs();
+                    });
+
+                  // Also refresh admin logs to get the latest data
+                  fetchAdminLogs();
                 }}
               />
             </CardContent>
@@ -304,9 +553,30 @@ export default function Home() {
                     onChange={(e) => setSelectedAnalystModel(e.target.value)}
                     className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5"
                   >
-                    {Object.entries(availableModels).map(([id, name]) => (
-                      <option key={id} value={id}>{name}</option>
-                    ))}
+                    {/* Group models by provider */}
+                    {useOllama ? (
+                      // Show only Ollama models when Ollama is selected
+                      <>
+                        <optgroup label="Ollama Models">
+                          {Object.entries(availableModels)
+                            .filter(([id]) => id.startsWith('ollama:'))
+                            .map(([id, name]) => (
+                              <option key={id} value={id}>{name}</option>
+                            ))}
+                        </optgroup>
+                      </>
+                    ) : (
+                      // Show only Groq models when Groq is selected
+                      <>
+                        <optgroup label="Groq Models">
+                          {Object.entries(availableModels)
+                            .filter(([id]) => !id.startsWith('ollama:'))
+                            .map(([id, name]) => (
+                              <option key={id} value={id}>{name}</option>
+                            ))}
+                        </optgroup>
+                      </>
+                    )}
                   </select>
                 </div>
                 {/* Coder Model Selector */}
@@ -318,9 +588,65 @@ export default function Home() {
                     onChange={(e) => setSelectedCoderModel(e.target.value)}
                     className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5"
                   >
-                    {Object.entries(availableModels).map(([id, name]) => (
-                      <option key={id} value={id}>{name}</option>
-                    ))}
+                    {/* Group models by provider */}
+                    {useOllama ? (
+                      // Show only Ollama models when Ollama is selected
+                      <>
+                        <optgroup label="Ollama Models">
+                          {Object.entries(availableModels)
+                            .filter(([id]) => id.startsWith('ollama:'))
+                            .map(([id, name]) => (
+                              <option key={id} value={id}>{name}</option>
+                            ))}
+                        </optgroup>
+                      </>
+                    ) : (
+                      // Show only Groq models when Groq is selected
+                      <>
+                        <optgroup label="Groq Models">
+                          {Object.entries(availableModels)
+                            .filter(([id]) => !id.startsWith('ollama:'))
+                            .map(([id, name]) => (
+                              <option key={id} value={id}>{name}</option>
+                            ))}
+                        </optgroup>
+                      </>
+                    )}
+                  </select>
+                </div>
+                {/* Manager Model Selector */}
+                <div className="flex flex-col">
+                  <Label htmlFor="manager-model-select" className="text-xs mb-1">Manager Model</Label>
+                  <select
+                    id="manager-model-select"
+                    value={selectedManagerModel}
+                    onChange={(e) => setSelectedManagerModel(e.target.value)}
+                    className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5"
+                  >
+                    {/* Group models by provider */}
+                    {useOllama ? (
+                      // Show only Ollama models when Ollama is selected
+                      <>
+                        <optgroup label="Ollama Models">
+                          {Object.entries(availableModels)
+                            .filter(([id]) => id.startsWith('ollama:'))
+                            .map(([id, name]) => (
+                              <option key={id} value={id}>{name}</option>
+                            ))}
+                        </optgroup>
+                      </>
+                    ) : (
+                      // Show only Groq models when Groq is selected
+                      <>
+                        <optgroup label="Groq Models">
+                          {Object.entries(availableModels)
+                            .filter(([id]) => !id.startsWith('ollama:'))
+                            .map(([id, name]) => (
+                              <option key={id} value={id}>{name}</option>
+                            ))}
+                        </optgroup>
+                      </>
+                    )}
                   </select>
                 </div>
                 {/* Upload/Cancel Button */}
@@ -396,7 +722,7 @@ export default function Home() {
           </Card>
 
           {/* Initial Visualizations Dashboard */}
-          {(isLoading || visualizations.length > 0) && (
+          {(isLoading || visualizations.length > 0 || plotlyVisualizations.length > 0) && (
             <Card className="w-full">
               <CardHeader className="border-b pb-3">
                 <CardTitle className="text-xl font-bold">Initial Financial Analysis</CardTitle>
@@ -407,21 +733,80 @@ export default function Home() {
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-700"></div>
                   </div>
                 )}
-                {!isLoading && visualizations.length === 0 && (
+                {!isLoading && visualizations.length === 0 && plotlyVisualizations.length === 0 && (
                   <div className="text-center py-10 text-gray-500">
                     <p>No visualizations generated yet. Upload a CSV file to start analysis.</p>
                   </div>
                 )}
-                {visualizations.length > 0 && (
+
+                {/* Plotly Visualizations */}
+                {plotlyVisualizations.length > 0 && (
+                  <div className="grid grid-cols-1 gap-8">
+                    {/* First row - full width for important visualizations */}
+                    {plotlyVisualizations.length > 0 && (
+                      <CodeVisualization
+                        key={`plotly-viz-0`}
+                        code={plotlyVisualizations[0].code}
+                        figure={plotlyVisualizations[0].figure}
+                        output={plotlyVisualizations[0].output}
+                        error={plotlyVisualizations[0].error}
+                        title={plotlyVisualizations[0].figure?.layout?.title?.text || "Visualization 1"}
+                        index={0}
+                        onExecute={(code) => handleExecuteCode(code, 0)}
+                        isExecuting={isExecutingCode && executingIndex === 0}
+                      />
+                    )}
+
+                    {/* Second row - two columns for additional visualizations */}
+                    {plotlyVisualizations.length > 1 && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {plotlyVisualizations.slice(1).map((viz, index) => (
+                          <CodeVisualization
+                            key={`plotly-viz-${index+1}`}
+                            code={viz.code}
+                            figure={viz.figure}
+                            output={viz.output}
+                            error={viz.error}
+                            title={viz.figure?.layout?.title?.text || `Visualization ${index+2}`}
+                            index={index+1}
+                            onExecute={(code) => handleExecuteCode(code, index+1)}
+                            isExecuting={isExecutingCode && executingIndex === index+1}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Legacy ECharts Visualizations */}
+                {visualizations.length > 0 && plotlyVisualizations.length === 0 && (
                   <div className="grid grid-cols-1 gap-8">
                     {/* First row - full width for important visualizations */}
                     {visualizations.length > 0 && (
                       <div className="border p-4 rounded-lg shadow-md bg-white hover:shadow-lg transition-shadow">
+                        {/* Add a key to force re-render when visualization changes */}
                         <ReactECharts
+                          key={`viz-0-${JSON.stringify(visualizations[0]).substring(0, 20)}`}
                           option={visualizations[0]}
                           style={{ height: 450, width: '100%' }}
-                          opts={{ renderer: 'canvas' }}
+                          opts={{ renderer: 'canvas', notMerge: true }}
+                          theme="light"
                         />
+                        {/* Debug toggle button */}
+                        <div className="mt-2 text-right">
+                          <button
+                            onClick={() => {
+                              const debugEl = document.getElementById(`debug-viz-0`);
+                              if (debugEl) debugEl.classList.toggle('hidden');
+                            }}
+                            className="text-xs text-gray-500 hover:text-gray-700"
+                          >
+                            Toggle Debug
+                          </button>
+                          <div id={`debug-viz-0`} className="hidden mt-2">
+                            <DebugVisualization data={visualizations[0]} />
+                          </div>
+                        </div>
                       </div>
                     )}
 
@@ -431,10 +816,27 @@ export default function Home() {
                         {visualizations.slice(1).map((config: EChartsConfig, index: number) => (
                           <div key={`initial-${index+1}`} className="border p-4 rounded-lg shadow-md bg-white hover:shadow-lg transition-shadow">
                             <ReactECharts
+                              key={`viz-${index+1}-${JSON.stringify(config).substring(0, 20)}`}
                               option={config}
                               style={{ height: 400, width: '100%' }}
-                              opts={{ renderer: 'canvas' }}
+                              opts={{ renderer: 'canvas', notMerge: true }}
+                              theme="light"
                             />
+                            {/* Debug toggle button */}
+                            <div className="mt-2 text-right">
+                              <button
+                                onClick={() => {
+                                  const debugEl = document.getElementById(`debug-viz-${index+1}`);
+                                  if (debugEl) debugEl.classList.toggle('hidden');
+                                }}
+                                className="text-xs text-gray-500 hover:text-gray-700"
+                              >
+                                Toggle Debug
+                              </button>
+                              <div id={`debug-viz-${index+1}`} className="hidden mt-2">
+                                <DebugVisualization data={config} />
+                              </div>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -446,7 +848,7 @@ export default function Home() {
           )}
 
           {/* Prompted Visualizations Dashboard */}
-          {(isLoadingPrompted || promptedVisualizations.length > 0) && (
+          {(isLoadingPrompted || promptedVisualizations.length > 0 || promptedPlotlyVisualizations.length > 0) && (
             <Card className="w-full">
               <CardHeader className="border-b pb-3">
                 <CardTitle className="text-xl font-bold">Custom Visualization</CardTitle>
@@ -457,21 +859,79 @@ export default function Home() {
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-700"></div>
                   </div>
                 )}
-                {!isLoadingPrompted && promptedVisualizations.length === 0 && (
+                {!isLoadingPrompted && promptedVisualizations.length === 0 && promptedPlotlyVisualizations.length === 0 && (
                   <div className="text-center py-10 text-gray-500">
                     <p>No custom visualizations generated yet. Enter a specific request.</p>
                   </div>
                 )}
-                {promptedVisualizations.length > 0 && (
+
+                {/* Plotly Prompted Visualizations */}
+                {promptedPlotlyVisualizations.length > 0 && (
+                  <div className="grid grid-cols-1 gap-8">
+                    {/* First prompted visualization - full width */}
+                    {promptedPlotlyVisualizations.length > 0 && (
+                      <CodeVisualization
+                        key={`prompted-plotly-viz-0`}
+                        code={promptedPlotlyVisualizations[0].code}
+                        figure={promptedPlotlyVisualizations[0].figure}
+                        output={promptedPlotlyVisualizations[0].output}
+                        error={promptedPlotlyVisualizations[0].error}
+                        title={promptedPlotlyVisualizations[0].figure?.layout?.title?.text || "Custom Visualization"}
+                        index={plotlyVisualizations.length} // Index after regular visualizations
+                        onExecute={(code) => handleExecuteCode(code, plotlyVisualizations.length)}
+                        isExecuting={isExecutingCode && executingIndex === plotlyVisualizations.length}
+                      />
+                    )}
+
+                    {/* Additional prompted visualizations - two columns */}
+                    {promptedPlotlyVisualizations.length > 1 && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {promptedPlotlyVisualizations.slice(1).map((viz, index) => (
+                          <CodeVisualization
+                            key={`prompted-plotly-viz-${index+1}`}
+                            code={viz.code}
+                            figure={viz.figure}
+                            output={viz.output}
+                            error={viz.error}
+                            title={viz.figure?.layout?.title?.text || `Custom Visualization ${index+2}`}
+                            index={plotlyVisualizations.length + index + 1}
+                            onExecute={(code) => handleExecuteCode(code, plotlyVisualizations.length + index + 1)}
+                            isExecuting={isExecutingCode && executingIndex === plotlyVisualizations.length + index + 1}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Legacy ECharts Prompted Visualizations */}
+                {promptedVisualizations.length > 0 && promptedPlotlyVisualizations.length === 0 && (
                   <div className="grid grid-cols-1 gap-8">
                     {/* First prompted visualization - full width */}
                     {promptedVisualizations.length > 0 && (
                       <div className="border p-4 rounded-lg shadow-md bg-white hover:shadow-lg transition-shadow">
                         <ReactECharts
+                          key={`prompted-0-${JSON.stringify(promptedVisualizations[0]).substring(0, 20)}`}
                           option={promptedVisualizations[0]}
                           style={{ height: 450, width: '100%' }}
-                          opts={{ renderer: 'canvas' }}
+                          opts={{ renderer: 'canvas', notMerge: true }}
+                          theme="light"
                         />
+                        {/* Debug toggle button */}
+                        <div className="mt-2 text-right">
+                          <button
+                            onClick={() => {
+                              const debugEl = document.getElementById(`debug-prompted-0`);
+                              if (debugEl) debugEl.classList.toggle('hidden');
+                            }}
+                            className="text-xs text-gray-500 hover:text-gray-700"
+                          >
+                            Toggle Debug
+                          </button>
+                          <div id={`debug-prompted-0`} className="hidden mt-2">
+                            <DebugVisualization data={promptedVisualizations[0]} />
+                          </div>
+                        </div>
                       </div>
                     )}
 
@@ -481,10 +941,27 @@ export default function Home() {
                         {promptedVisualizations.slice(1).map((config: EChartsConfig, index: number) => (
                           <div key={`prompted-${index+1}`} className="border p-4 rounded-lg shadow-md bg-white hover:shadow-lg transition-shadow">
                             <ReactECharts
+                              key={`prompted-${index+1}-${JSON.stringify(config).substring(0, 20)}`}
                               option={config}
                               style={{ height: 400, width: '100%' }}
-                              opts={{ renderer: 'canvas' }}
+                              opts={{ renderer: 'canvas', notMerge: true }}
+                              theme="light"
                             />
+                            {/* Debug toggle button */}
+                            <div className="mt-2 text-right">
+                              <button
+                                onClick={() => {
+                                  const debugEl = document.getElementById(`debug-prompted-${index+1}`);
+                                  if (debugEl) debugEl.classList.toggle('hidden');
+                                }}
+                                className="text-xs text-gray-500 hover:text-gray-700"
+                              >
+                                Toggle Debug
+                              </button>
+                              <div id={`debug-prompted-${index+1}`} className="hidden mt-2">
+                                <DebugVisualization data={config} />
+                              </div>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -501,20 +978,65 @@ export default function Home() {
           <div className="sticky top-6">
             <Card className="w-full">
               <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle>Agent Monitor</CardTitle>
+                <div className="flex items-center gap-2">
+                  <CardTitle>Agent Monitor</CardTitle>
+                  {hasNewLogs && !showAdminMonitor && (
+                    <span className="animate-pulse inline-flex h-3 w-3 rounded-full bg-red-500"></span>
+                  )}
+                </div>
                 <button
-                  onClick={() => setShowAdminMonitor(!showAdminMonitor)}
+                  onClick={() => {
+                    setShowAdminMonitor(!showAdminMonitor);
+                    // When showing the monitor, clear the new logs indicator and refresh logs
+                    if (!showAdminMonitor) {
+                      setHasNewLogs(false);
+                      fetchAdminLogs();
+                    }
+                  }}
                   className="text-sm text-gray-600 hover:text-gray-800"
                 >
                   {showAdminMonitor ? 'Hide' : 'Show'}
+                  {hasNewLogs && !showAdminMonitor && ' (New)'}
                 </button>
               </CardHeader>
               <CardContent>
                 {showAdminMonitor ? (
-                  <AgentConversationMonitor logs={adminLogs} />
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-xs text-gray-500">
+                        {adminLogs.length > 0 ? `${adminLogs.length} log entries` : 'No logs yet'}
+                      </span>
+                      <div className="flex space-x-3">
+                        <button
+                          onClick={handleResetBackend}
+                          className="text-xs text-red-600 hover:text-red-800 flex items-center"
+                          title="Reset backend state, clear logs and cancel any running jobs"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                            <path d="M3 3v5h5"></path>
+                            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+                            <path d="M16 21h5v-5"></path>
+                          </svg>
+                          Reset
+                        </button>
+                        <button
+                          onClick={fetchAdminLogs}
+                          className="text-xs text-blue-600 hover:text-blue-800"
+                        >
+                          Refresh
+                        </button>
+                      </div>
+                    </div>
+                    <AgentConversationMonitor logs={adminLogs} />
+                  </div>
                 ) : (
                   <div className="text-center py-10 text-gray-500">
-                    <p>Agent monitor is hidden. Click "Show" to view agent conversations.</p>
+                    <p>
+                      Agent monitor is hidden.
+                      {hasNewLogs && <span className="text-red-500 font-semibold"> New activity detected!</span>}
+                    </p>
+                    <p>Click "Show" to view agent conversations.</p>
                   </div>
                 )}
               </CardContent>
