@@ -80,9 +80,9 @@ export function PlotlyChart({
       </div>
     );
   }
-
-  // Handle empty data
-  if (!plotConfig.data || plotConfig.data.length === 0) {
+  
+  // Handle undefined plotConfig or empty data
+  if (!plotConfig || !plotConfig.data || plotConfig.data.length === 0) {
     return (
       <div
         style={{ height, width }}

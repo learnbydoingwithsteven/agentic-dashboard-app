@@ -7,11 +7,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Terminal, Settings, Code } from "lucide-react";
+import { Terminal } from "lucide-react";
 import { ApiKeySettings, getApiKey, getUseOllama } from "@/components/ApiKeySettings";
 import { AgentConversationMonitor } from "@/components/AgentConversationMonitor";
 import { DebugVisualization } from "@/components/DebugVisualization";
 import { CodeVisualization } from "@/components/CodeVisualization";
+// import { DataExplorationPage } from "@/components/DataExploration";
+import DataExplorationPageDebug from "@/components/DataExploration/DataExplorationPageDebug";
+import { saveAppState, loadAppState, AppState } from "@/lib/stateStorage";
+import { safeArray, safeArrayItem, safeArrayMap } from "@/lib/arrayUtils";
 
 interface AdminLog {
   timestamp: string;
@@ -49,6 +53,14 @@ export default function Home() {
   // Plotly visualizations state
   const [plotlyVisualizations, setPlotlyVisualizations] = useState<PlotlyVisualization[]>([]);
   const [promptedPlotlyVisualizations, setPromptedPlotlyVisualizations] = useState<PlotlyVisualization[]>([]);
+
+  // Ensure arrays are always initialized
+  useEffect(() => {
+    if (!Array.isArray(visualizations)) setVisualizations([]);
+    if (!Array.isArray(promptedVisualizations)) setPromptedVisualizations([]);
+    if (!Array.isArray(plotlyVisualizations)) setPlotlyVisualizations([]);
+    if (!Array.isArray(promptedPlotlyVisualizations)) setPromptedPlotlyVisualizations([]);
+  }, [visualizations, promptedVisualizations, plotlyVisualizations, promptedPlotlyVisualizations]);
   const [isExecutingCode, setIsExecutingCode] = useState<boolean>(false);
   const [executingIndex, setExecutingIndex] = useState<number>(-1);
 
@@ -57,7 +69,9 @@ export default function Home() {
   const [isLoadingPrompted, setIsLoadingPrompted] = useState(false);
   const [adminLogs, setAdminLogs] = useState<AdminLog[]>([]);
   const [showAdminMonitor, setShowAdminMonitor] = useState(true);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [showApiSettings, setShowApiSettings] = useState(false);
+  const [showDataExploration, setShowDataExploration] = useState(false);
   // API key and Ollama state
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [useOllama, setUseOllama] = useState<boolean>(false);
@@ -100,7 +114,7 @@ export default function Home() {
   // State to track if there are new logs
   const [hasNewLogs, setHasNewLogs] = useState(false);
 
-  // Fetch admin logs periodically or on demand
+  // Fetch admin logs periodically or on demand (fallback method)
   const fetchAdminLogs = useCallback(() => {
     // Skip if no API key is available and not using Ollama
     if (!apiKey && !useOllama) return;
@@ -141,18 +155,135 @@ export default function Home() {
       .catch(error => console.error('Error fetching admin logs:', error));
   }, [apiKey, useOllama, getRequestHeaders, adminLogs.length, showAdminMonitor]);
 
-
-  // Load API key and Ollama setting on component mount
+  // Setup real-time log streaming using Server-Sent Events
   useEffect(() => {
-    const savedApiKey = getApiKey();
-    const savedUseOllama = getUseOllama();
+    // Skip if no API key is available and not using Ollama
+    if (!apiKey && !useOllama) return;
 
-    setApiKey(savedApiKey);
-    setUseOllama(savedUseOllama);
+    // Skip if admin monitor is not visible
+    if (!showAdminMonitor) return;
 
-    // If no API key is found and not using Ollama, show the API settings
-    if (!savedApiKey && !savedUseOllama) {
-      setShowApiSettings(true);
+    console.log('Setting up real-time agent conversation monitoring...');
+
+    // Create EventSource for SSE connection with proper URL parameters
+    // Build the URL with query parameters first since EventSource.url is read-only
+    const headers = getRequestHeaders();
+    let sseUrl = `${API_BASE_URL}/admin/logs/stream`;
+
+    // Add headers as query parameters
+    Object.keys(headers).forEach((key, index) => {
+      sseUrl += index === 0 ? '?' : '&';
+      sseUrl += `${key}=${encodeURIComponent(headers[key])}`;
+    });
+
+    // Create EventSource with the complete URL
+    const eventSource = new EventSource(sseUrl, {
+      withCredentials: true
+    });
+
+    // Handle incoming events
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        // Handle different types of messages
+        if (data.type === 'heartbeat') {
+          // Just a keepalive, no action needed
+          console.debug('SSE heartbeat received');
+        } else if (data.type === 'append') {
+          // Append new logs to existing logs
+          if (data.logs && Array.isArray(data.logs)) {
+            console.log(`Received ${data.logs.length} new logs via SSE`);
+            setAdminLogs(prevLogs => {
+              const newLogs = [...data.logs.reverse(), ...prevLogs];
+              return newLogs;
+            });
+            setHasNewLogs(true);
+          }
+        } else {
+          // Initial data or full refresh
+          if (data.logs && Array.isArray(data.logs)) {
+            console.log(`Received ${data.logs.length} logs via SSE (full refresh)`);
+            setAdminLogs(data.logs.reverse());
+          }
+
+          // Update available models if present
+          if (data.available_models) {
+            setAvailableModels(data.available_models);
+          }
+        }
+      } catch (error) {
+        console.error('Error processing SSE message:', error);
+      }
+    };
+
+    // Handle connection open
+    eventSource.onopen = () => {
+      console.log('SSE connection established for real-time agent monitoring');
+    };
+
+    // Handle errors
+    eventSource.onerror = (error) => {
+      console.error('SSE connection error:', error);
+      // Try to reconnect after a delay
+      setTimeout(() => {
+        console.log('Attempting to reconnect SSE...');
+        eventSource.close();
+      }, 5000);
+    };
+
+    // Clean up the connection when component unmounts or dependencies change
+    return () => {
+      console.log('Closing SSE connection');
+      eventSource.close();
+    };
+  }, [apiKey, useOllama, getRequestHeaders, showAdminMonitor]);
+
+
+  // Load API key, Ollama setting, and app state on component mount
+  useEffect(() => {
+    try {
+      // Load API key and Ollama settings
+      const savedApiKey = getApiKey();
+      const savedUseOllama = getUseOllama();
+
+      setApiKey(savedApiKey);
+      setUseOllama(savedUseOllama);
+
+      // If no API key is found and not using Ollama, show the API settings
+      if (!savedApiKey && !savedUseOllama) {
+        setShowApiSettings(true);
+      }
+
+      // Load saved application state
+      const savedState = loadAppState();
+      if (savedState) {
+        console.log('Restoring saved application state:', savedState);
+
+        // Restore UI state
+        if (savedState.showDataExploration !== undefined) {
+          setShowDataExploration(savedState.showDataExploration);
+        }
+
+        if (savedState.showAdminMonitor !== undefined) {
+          setShowAdminMonitor(savedState.showAdminMonitor);
+        }
+
+        // Restore model selections if available
+        if (savedState.selectedAnalystModel) {
+          setSelectedAnalystModel(savedState.selectedAnalystModel);
+        }
+
+        if (savedState.selectedCoderModel) {
+          setSelectedCoderModel(savedState.selectedCoderModel);
+        }
+
+        if (savedState.selectedManagerModel) {
+          setSelectedManagerModel(savedState.selectedManagerModel);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading saved state:', error);
     }
   }, []);
 
@@ -165,6 +296,39 @@ export default function Home() {
     // Cleanup interval on unmount
     return () => clearInterval(intervalId);
   }, [fetchAdminLogs]);
+
+  // Save application state when important state changes
+  useEffect(() => {
+    try {
+      // Save current state to localStorage
+      const currentState: AppState = {
+        showDataExploration,
+        showAdminMonitor,
+        selectedAnalystModel,
+        selectedCoderModel,
+        selectedManagerModel,
+        visualizationsAvailable: visualizations.length > 0 || plotlyVisualizations.length > 0,
+        promptedVisualizationsAvailable: promptedVisualizations.length > 0 || promptedPlotlyVisualizations.length > 0
+      };
+
+      saveAppState(currentState);
+      console.log('Saved application state:', currentState);
+    } catch (error) {
+      console.error('Error saving application state:', error);
+    }
+  }, [
+    showDataExploration,
+    showAdminMonitor,
+    selectedAnalystModel,
+    selectedCoderModel,
+    selectedManagerModel,
+    // Don't include the actual visualization data in the dependency array
+    // as we only want to track if they exist, not their content
+    visualizations.length,
+    plotlyVisualizations.length,
+    promptedVisualizations.length,
+    promptedPlotlyVisualizations.length
+  ]);
 
   const handleUpload = useCallback(async () => {
     if (!file) {
@@ -298,13 +462,14 @@ export default function Home() {
       // Check if we have Plotly visualizations
       if (data.code_blocks && Array.isArray(data.code_blocks)) {
         // We have Plotly visualizations
-        const plotlyViz = data.visualizations.map((figure: any, index: number) => ({
+        const visualizations = Array.isArray(data.visualizations) ? data.visualizations : [];
+        const plotlyViz = visualizations.map((figure: any, index: number) => ({
           figure,
           code: data.code_blocks[index] || '',
           output: data.outputs && data.outputs[index] ? data.outputs[index] : '',
           error: data.errors && data.errors[index] ? data.errors[index] : ''
         }));
-        setPromptedPlotlyVisualizations(plotlyViz);
+        setPromptedPlotlyVisualizations(Array.isArray(plotlyViz) ? plotlyViz : []);
       } else {
         // We have ECharts visualizations (legacy)
         setPromptedVisualizations(data.visualizations || []);
@@ -460,16 +625,40 @@ export default function Home() {
     }
   };
 
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-start p-6 md:p-12 lg:p-24 bg-gray-50">
-      <div className="z-10 w-full max-w-7xl items-center justify-between font-mono text-sm lg:flex mb-8">
-        <h1 className="text-2xl font-bold text-center lg:text-left">Agentic Data Visualization</h1>
-      </div>
+  // Wrap the render in a try-catch to handle any rendering errors
+  try {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-start p-6 md:p-12 lg:p-24 bg-gray-50">
+        <div className="z-10 w-full max-w-7xl items-center justify-between font-mono text-sm lg:flex mb-8">
+          <h1 className="text-2xl font-bold text-center lg:text-left">Agentic Data Visualization</h1>
+          <div className="flex space-x-4 mt-4 lg:mt-0">
+            <button
+              onClick={() => setShowDataExploration(false)}
+              className={`px-4 py-2 rounded-md text-sm font-medium ${!showDataExploration ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'}`}
+            >
+              Agent Visualizations
+            </button>
+            <button
+              onClick={() => setShowDataExploration(true)}
+              className={`px-4 py-2 rounded-md text-sm font-medium ${showDataExploration ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'}`}
+            >
+              Data Exploration
+            </button>
+          </div>
+        </div>
 
       {/* Main content area with two columns */}
       <div className="w-full max-w-7xl flex flex-col lg:flex-row gap-6">
-        {/* Left column - Steps and Visualizations */}
-        <div className="flex-1 flex flex-col gap-6">
+        {showDataExploration ? (
+          /* Data Exploration View */
+          <div className="flex-1">
+            <DataExplorationPageDebug onBack={() => setShowDataExploration(false)} />
+          </div>
+        ) : (
+          /* Regular Agent Visualization View */
+          <>
+            {/* Left column - Steps and Visualizations */}
+            <div className="flex-1 flex flex-col gap-6">
           {/* Step 1: API Key Settings */}
           <Card className="w-full">
             <CardHeader>
@@ -722,7 +911,7 @@ export default function Home() {
           </Card>
 
           {/* Initial Visualizations Dashboard */}
-          {(isLoading || visualizations.length > 0 || plotlyVisualizations.length > 0) && (
+          {(isLoading || safeArray(visualizations).length > 0 || safeArray(plotlyVisualizations).length > 0) && (
             <Card className="w-full">
               <CardHeader className="border-b pb-3">
                 <CardTitle className="text-xl font-bold">Initial Financial Analysis</CardTitle>
@@ -733,24 +922,24 @@ export default function Home() {
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-700"></div>
                   </div>
                 )}
-                {!isLoading && visualizations.length === 0 && plotlyVisualizations.length === 0 && (
+                {!isLoading && safeArray(visualizations).length === 0 && safeArray(plotlyVisualizations).length === 0 && (
                   <div className="text-center py-10 text-gray-500">
                     <p>No visualizations generated yet. Upload a CSV file to start analysis.</p>
                   </div>
                 )}
 
                 {/* Plotly Visualizations */}
-                {plotlyVisualizations.length > 0 && (
+                {safeArray(plotlyVisualizations).length > 0 && (
                   <div className="grid grid-cols-1 gap-8">
                     {/* First row - full width for important visualizations */}
-                    {plotlyVisualizations.length > 0 && (
+                    {safeArrayItem(plotlyVisualizations, 0) && (
                       <CodeVisualization
                         key={`plotly-viz-0`}
-                        code={plotlyVisualizations[0].code}
-                        figure={plotlyVisualizations[0].figure}
-                        output={plotlyVisualizations[0].output}
-                        error={plotlyVisualizations[0].error}
-                        title={plotlyVisualizations[0].figure?.layout?.title?.text || "Visualization 1"}
+                        code={safeArrayItem(plotlyVisualizations, 0)?.code || ''}
+                        figure={safeArrayItem(plotlyVisualizations, 0)?.figure || {}}
+                        output={safeArrayItem(plotlyVisualizations, 0)?.output || ''}
+                        error={safeArrayItem(plotlyVisualizations, 0)?.error || ''}
+                        title={safeArrayItem(plotlyVisualizations, 0)?.figure?.layout?.title?.text || "Visualization 1"}
                         index={0}
                         onExecute={(code) => handleExecuteCode(code, 0)}
                         isExecuting={isExecutingCode && executingIndex === 0}
@@ -758,16 +947,16 @@ export default function Home() {
                     )}
 
                     {/* Second row - two columns for additional visualizations */}
-                    {plotlyVisualizations.length > 1 && (
+                    {safeArray(plotlyVisualizations).length > 1 && (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {plotlyVisualizations.slice(1).map((viz, index) => (
+                        {safeArrayMap(safeArray(plotlyVisualizations).slice(1), (viz, index) => (
                           <CodeVisualization
                             key={`plotly-viz-${index+1}`}
-                            code={viz.code}
-                            figure={viz.figure}
-                            output={viz.output}
-                            error={viz.error}
-                            title={viz.figure?.layout?.title?.text || `Visualization ${index+2}`}
+                            code={viz?.code || ''}
+                            figure={viz?.figure || {}}
+                            output={viz?.output || ''}
+                            error={viz?.error || ''}
+                            title={(viz?.figure?.layout?.title?.text) || `Visualization ${index+2}`}
                             index={index+1}
                             onExecute={(code) => handleExecuteCode(code, index+1)}
                             isExecuting={isExecutingCode && executingIndex === index+1}
@@ -779,17 +968,20 @@ export default function Home() {
                 )}
 
                 {/* Legacy ECharts Visualizations */}
-                {visualizations.length > 0 && plotlyVisualizations.length === 0 && (
+                {safeArray(visualizations).length > 0 && safeArray(plotlyVisualizations).length === 0 && (
                   <div className="grid grid-cols-1 gap-8">
                     {/* First row - full width for important visualizations */}
-                    {visualizations.length > 0 && (
+                    {safeArray(visualizations).length > 0 && safeArrayItem(visualizations, 0) && (
                       <div className="border p-4 rounded-lg shadow-md bg-white hover:shadow-lg transition-shadow">
+                        <h3 className="text-lg font-semibold mb-4 text-center">
+                          {safeArrayItem(visualizations, 0)?.title?.text || "Visualization 1"}
+                        </h3>
                         {/* Add a key to force re-render when visualization changes */}
                         <ReactECharts
-                          key={`viz-0-${JSON.stringify(visualizations[0]).substring(0, 20)}`}
-                          option={visualizations[0]}
+                          key={`viz-0-${JSON.stringify(safeArrayItem(visualizations, 0)).substring(0, 20)}`}
+                          option={safeArrayItem(visualizations, 0) || { series: [] }}
                           style={{ height: 450, width: '100%' }}
-                          opts={{ renderer: 'canvas', notMerge: true }}
+                          opts={{ renderer: 'canvas' }}
                           theme="light"
                         />
                         {/* Debug toggle button */}
@@ -804,22 +996,25 @@ export default function Home() {
                             Toggle Debug
                           </button>
                           <div id={`debug-viz-0`} className="hidden mt-2">
-                            <DebugVisualization data={visualizations[0]} />
+                            <DebugVisualization data={safeArrayItem(visualizations, 0) || {}} />
                           </div>
                         </div>
                       </div>
                     )}
 
                     {/* Second row - two columns for additional visualizations */}
-                    {visualizations.length > 1 && (
+                    {safeArray(visualizations).length > 1 && (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {visualizations.slice(1).map((config: EChartsConfig, index: number) => (
+                        {safeArrayMap(safeArray(visualizations).slice(1), (config: EChartsConfig, index: number) => (
                           <div key={`initial-${index+1}`} className="border p-4 rounded-lg shadow-md bg-white hover:shadow-lg transition-shadow">
+                            <h3 className="text-lg font-semibold mb-4 text-center">
+                              {config?.title?.text || `Visualization ${index+2}`}
+                            </h3>
                             <ReactECharts
                               key={`viz-${index+1}-${JSON.stringify(config).substring(0, 20)}`}
-                              option={config}
+                              option={config || { series: [] }}
                               style={{ height: 400, width: '100%' }}
-                              opts={{ renderer: 'canvas', notMerge: true }}
+                              opts={{ renderer: 'canvas' }}
                               theme="light"
                             />
                             {/* Debug toggle button */}
@@ -834,7 +1029,7 @@ export default function Home() {
                                 Toggle Debug
                               </button>
                               <div id={`debug-viz-${index+1}`} className="hidden mt-2">
-                                <DebugVisualization data={config} />
+                                <DebugVisualization data={config || {}} />
                               </div>
                             </div>
                           </div>
@@ -848,7 +1043,7 @@ export default function Home() {
           )}
 
           {/* Prompted Visualizations Dashboard */}
-          {(isLoadingPrompted || promptedVisualizations.length > 0 || promptedPlotlyVisualizations.length > 0) && (
+          {(isLoadingPrompted || safeArray(promptedVisualizations).length > 0 || safeArray(promptedPlotlyVisualizations).length > 0) && (
             <Card className="w-full">
               <CardHeader className="border-b pb-3">
                 <CardTitle className="text-xl font-bold">Custom Visualization</CardTitle>
@@ -859,44 +1054,44 @@ export default function Home() {
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-700"></div>
                   </div>
                 )}
-                {!isLoadingPrompted && promptedVisualizations.length === 0 && promptedPlotlyVisualizations.length === 0 && (
+                {!isLoadingPrompted && safeArray(promptedVisualizations).length === 0 && safeArray(promptedPlotlyVisualizations).length === 0 && (
                   <div className="text-center py-10 text-gray-500">
                     <p>No custom visualizations generated yet. Enter a specific request.</p>
                   </div>
                 )}
 
                 {/* Plotly Prompted Visualizations */}
-                {promptedPlotlyVisualizations.length > 0 && (
+                {safeArray(promptedPlotlyVisualizations).length > 0 && (
                   <div className="grid grid-cols-1 gap-8">
                     {/* First prompted visualization - full width */}
-                    {promptedPlotlyVisualizations.length > 0 && (
+                    {safeArrayItem(promptedPlotlyVisualizations, 0) && (
                       <CodeVisualization
                         key={`prompted-plotly-viz-0`}
-                        code={promptedPlotlyVisualizations[0].code}
-                        figure={promptedPlotlyVisualizations[0].figure}
-                        output={promptedPlotlyVisualizations[0].output}
-                        error={promptedPlotlyVisualizations[0].error}
-                        title={promptedPlotlyVisualizations[0].figure?.layout?.title?.text || "Custom Visualization"}
-                        index={plotlyVisualizations.length} // Index after regular visualizations
-                        onExecute={(code) => handleExecuteCode(code, plotlyVisualizations.length)}
-                        isExecuting={isExecutingCode && executingIndex === plotlyVisualizations.length}
+                        code={safeArrayItem(promptedPlotlyVisualizations, 0)?.code || ''}
+                        figure={safeArrayItem(promptedPlotlyVisualizations, 0)?.figure || {}}
+                        output={safeArrayItem(promptedPlotlyVisualizations, 0)?.output || ''}
+                        error={safeArrayItem(promptedPlotlyVisualizations, 0)?.error || ''}
+                        title={safeArrayItem(promptedPlotlyVisualizations, 0)?.figure?.layout?.title?.text || "Custom Visualization"}
+                        index={safeArray(plotlyVisualizations).length} // Index after regular visualizations
+                        onExecute={(code) => handleExecuteCode(code, safeArray(plotlyVisualizations).length)}
+                        isExecuting={isExecutingCode && executingIndex === safeArray(plotlyVisualizations).length}
                       />
                     )}
 
                     {/* Additional prompted visualizations - two columns */}
-                    {promptedPlotlyVisualizations.length > 1 && (
+                    {safeArray(promptedPlotlyVisualizations).length > 1 && (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {promptedPlotlyVisualizations.slice(1).map((viz, index) => (
+                        {safeArrayMap(safeArray(promptedPlotlyVisualizations).slice(1), (viz, index) => (
                           <CodeVisualization
                             key={`prompted-plotly-viz-${index+1}`}
-                            code={viz.code}
-                            figure={viz.figure}
-                            output={viz.output}
-                            error={viz.error}
-                            title={viz.figure?.layout?.title?.text || `Custom Visualization ${index+2}`}
-                            index={plotlyVisualizations.length + index + 1}
-                            onExecute={(code) => handleExecuteCode(code, plotlyVisualizations.length + index + 1)}
-                            isExecuting={isExecutingCode && executingIndex === plotlyVisualizations.length + index + 1}
+                            code={viz?.code || ''}
+                            figure={viz?.figure || {}}
+                            output={viz?.output || ''}
+                            error={viz?.error || ''}
+                            title={viz?.figure?.layout?.title?.text || `Custom Visualization ${index+2}`}
+                            index={safeArray(plotlyVisualizations).length + index + 1}
+                            onExecute={(code) => handleExecuteCode(code, safeArray(plotlyVisualizations).length + index + 1)}
+                            isExecuting={isExecutingCode && executingIndex === (safeArray(plotlyVisualizations).length + index + 1)}
                           />
                         ))}
                       </div>
@@ -905,16 +1100,19 @@ export default function Home() {
                 )}
 
                 {/* Legacy ECharts Prompted Visualizations */}
-                {promptedVisualizations.length > 0 && promptedPlotlyVisualizations.length === 0 && (
+                {safeArray(promptedVisualizations).length > 0 && safeArray(promptedPlotlyVisualizations).length === 0 && (
                   <div className="grid grid-cols-1 gap-8">
                     {/* First prompted visualization - full width */}
-                    {promptedVisualizations.length > 0 && (
+                    {safeArray(promptedVisualizations).length > 0 && safeArrayItem(promptedVisualizations, 0) && (
                       <div className="border p-4 rounded-lg shadow-md bg-white hover:shadow-lg transition-shadow">
+                        <h3 className="text-lg font-semibold mb-4 text-center">
+                          {safeArrayItem(promptedVisualizations, 0)?.title?.text || "Custom Visualization"}
+                        </h3>
                         <ReactECharts
-                          key={`prompted-0-${JSON.stringify(promptedVisualizations[0]).substring(0, 20)}`}
-                          option={promptedVisualizations[0]}
+                          key={`prompted-0-${JSON.stringify(safeArrayItem(promptedVisualizations, 0)).substring(0, 20)}`}
+                          option={safeArrayItem(promptedVisualizations, 0) || { series: [] }}
                           style={{ height: 450, width: '100%' }}
-                          opts={{ renderer: 'canvas', notMerge: true }}
+                          opts={{ renderer: 'canvas' }}
                           theme="light"
                         />
                         {/* Debug toggle button */}
@@ -929,22 +1127,25 @@ export default function Home() {
                             Toggle Debug
                           </button>
                           <div id={`debug-prompted-0`} className="hidden mt-2">
-                            <DebugVisualization data={promptedVisualizations[0]} />
+                            <DebugVisualization data={safeArrayItem(promptedVisualizations, 0) || {}} />
                           </div>
                         </div>
                       </div>
                     )}
 
                     {/* Additional prompted visualizations - two columns */}
-                    {promptedVisualizations.length > 1 && (
+                    {safeArray(promptedVisualizations).length > 1 && (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {promptedVisualizations.slice(1).map((config: EChartsConfig, index: number) => (
+                        {safeArrayMap(safeArray(promptedVisualizations).slice(1), (config: EChartsConfig, index: number) => (
                           <div key={`prompted-${index+1}`} className="border p-4 rounded-lg shadow-md bg-white hover:shadow-lg transition-shadow">
+                            <h3 className="text-lg font-semibold mb-4 text-center">
+                              {config?.title?.text || `Custom Visualization ${index+2}`}
+                            </h3>
                             <ReactECharts
                               key={`prompted-${index+1}-${JSON.stringify(config).substring(0, 20)}`}
-                              option={config}
+                              option={config || { series: [] }}
                               style={{ height: 400, width: '100%' }}
-                              opts={{ renderer: 'canvas', notMerge: true }}
+                              opts={{ renderer: 'canvas' }}
                               theme="light"
                             />
                             {/* Debug toggle button */}
@@ -959,7 +1160,7 @@ export default function Home() {
                                 Toggle Debug
                               </button>
                               <div id={`debug-prompted-${index+1}`} className="hidden mt-2">
-                                <DebugVisualization data={config} />
+                                <DebugVisualization data={config || {}} />
                               </div>
                             </div>
                           </div>
@@ -973,77 +1174,107 @@ export default function Home() {
           )}
         </div>
 
-        {/* Right column - Agent Monitor */}
-        <div className="lg:w-1/3 w-full">
-          <div className="sticky top-6">
-            <Card className="w-full">
-              <CardHeader className="flex flex-row items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <CardTitle>Agent Monitor</CardTitle>
-                  {hasNewLogs && !showAdminMonitor && (
-                    <span className="animate-pulse inline-flex h-3 w-3 rounded-full bg-red-500"></span>
-                  )}
-                </div>
-                <button
-                  onClick={() => {
-                    setShowAdminMonitor(!showAdminMonitor);
-                    // When showing the monitor, clear the new logs indicator and refresh logs
-                    if (!showAdminMonitor) {
-                      setHasNewLogs(false);
-                      fetchAdminLogs();
-                    }
-                  }}
-                  className="text-sm text-gray-600 hover:text-gray-800"
-                >
-                  {showAdminMonitor ? 'Hide' : 'Show'}
-                  {hasNewLogs && !showAdminMonitor && ' (New)'}
-                </button>
-              </CardHeader>
-              <CardContent>
-                {showAdminMonitor ? (
-                  <div>
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-xs text-gray-500">
-                        {adminLogs.length > 0 ? `${adminLogs.length} log entries` : 'No logs yet'}
-                      </span>
-                      <div className="flex space-x-3">
-                        <button
-                          onClick={handleResetBackend}
-                          className="text-xs text-red-600 hover:text-red-800 flex items-center"
-                          title="Reset backend state, clear logs and cancel any running jobs"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
-                            <path d="M3 3v5h5"></path>
-                            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
-                            <path d="M16 21h5v-5"></path>
-                          </svg>
-                          Reset
-                        </button>
-                        <button
-                          onClick={fetchAdminLogs}
-                          className="text-xs text-blue-600 hover:text-blue-800"
-                        >
-                          Refresh
-                        </button>
+            {/* Fixed: Removed unclosed div */}
+          </>
+        )}
+
+        {/* Right column - Agent Monitor (always visible) */}
+        {!showDataExploration && (
+          <div className="lg:w-1/3 w-full">
+            <div className="sticky top-6">
+              <Card className="w-full">
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <CardTitle>Agent Monitor</CardTitle>
+                    {hasNewLogs && !showAdminMonitor && (
+                      <span className="animate-pulse inline-flex h-3 w-3 rounded-full bg-red-500"></span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => {
+                      setShowAdminMonitor(!showAdminMonitor);
+                      // When showing the monitor, clear the new logs indicator and refresh logs
+                      if (!showAdminMonitor) {
+                        setHasNewLogs(false);
+                        fetchAdminLogs();
+                      }
+                    }}
+                    className="text-sm text-gray-600 hover:text-gray-800"
+                  >
+                    {showAdminMonitor ? 'Hide' : 'Show'}
+                    {hasNewLogs && !showAdminMonitor && ' (New)'}
+                  </button>
+                </CardHeader>
+                <CardContent>
+                  {showAdminMonitor ? (
+                    <div>
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-xs text-gray-500">
+                          {adminLogs.length > 0 ? `${adminLogs.length} log entries` : 'No logs yet'}
+                        </span>
+                        <div className="flex space-x-3">
+                          <button
+                            onClick={handleResetBackend}
+                            className="text-xs text-red-600 hover:text-red-800 flex items-center"
+                            title="Reset backend state, clear logs and cancel any running jobs"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                              <path d="M3 3v5h5"></path>
+                              <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+                              <path d="M16 21h5v-5"></path>
+                            </svg>
+                            Reset
+                          </button>
+                          <button
+                            onClick={fetchAdminLogs}
+                            className="text-xs text-blue-600 hover:text-blue-800"
+                          >
+                            Refresh
+                          </button>
+                        </div>
                       </div>
+                      <AgentConversationMonitor logs={adminLogs} />
                     </div>
-                    <AgentConversationMonitor logs={adminLogs} />
-                  </div>
-                ) : (
-                  <div className="text-center py-10 text-gray-500">
-                    <p>
-                      Agent monitor is hidden.
-                      {hasNewLogs && <span className="text-red-500 font-semibold"> New activity detected!</span>}
-                    </p>
-                    <p>Click "Show" to view agent conversations.</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                  ) : (
+                    <div className="text-center py-10 text-gray-500">
+                      <p>
+                        Agent monitor is hidden.
+                        {hasNewLogs && <span className="text-red-500 font-semibold"> New activity detected!</span>}
+                      </p>
+                      <p>Click "Show" to view agent conversations.</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </main>
   );
+  } catch (error) {
+    console.error('Error rendering application:', error);
+    return (
+      <div className="p-6 max-w-4xl mx-auto">
+        <Alert variant="destructive" className="mb-4">
+          <AlertTitle>Something went wrong</AlertTitle>
+          <AlertDescription>
+            <p className="mb-2">The application encountered an error and couldn't continue.</p>
+            <p className="mb-4 text-sm whitespace-pre-wrap overflow-auto max-h-40">
+              {error instanceof Error ? error.toString() : 'Unknown error'}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => window.location.reload()}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+              >
+                Reload Application
+              </button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 }

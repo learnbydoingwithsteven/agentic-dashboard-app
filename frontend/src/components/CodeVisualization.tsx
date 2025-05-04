@@ -32,9 +32,17 @@ export function CodeVisualization({
   const [codeValue, setCodeValue] = useState<string>(code);
   
   // Convert the figure to a PlotlyConfig
-  const plotConfig: PlotlyConfig = {
+  const plotConfig: PlotlyConfig = figure ? {
     data: figure.data || [],
     layout: figure.layout || {},
+    config: {
+      responsive: true,
+      displayModeBar: true,
+      displaylogo: false,
+    },
+  } : {
+    data: [],
+    layout: {},
     config: {
       responsive: true,
       displayModeBar: true,

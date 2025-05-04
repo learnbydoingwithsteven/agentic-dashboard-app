@@ -118,29 +118,8 @@ export function ApiKeySettings({ onApiKeySaved }: ApiKeySettingsProps) {
         setIsSaved(true);
         setValidationError(null);
 
-        // Force a refresh of available models by making a direct call to check_api_key
-        // This ensures we get the latest models with the new API key
-        const headers: Record<string, string> = {};
-        if (apiKey.trim()) {
-          headers['X-API-KEY'] = apiKey;
-        }
-        // Always set the USE-OLLAMA header, either true or false
-        headers['USE-OLLAMA'] = useOllama ? 'true' : 'false';
-
-        console.log("Refreshing models with new API key...");
-        const modelResponse = await fetch('http://localhost:5001/api/check_api_key', {
-          method: 'GET',
-          headers
-        });
-
-        if (modelResponse.ok) {
-          const modelData = await modelResponse.json();
-          if (modelData.available_models) {
-            setAvailableModels(modelData.available_models);
-            setShowModels(true);
-            console.log("Models refreshed successfully:", Object.keys(modelData.available_models).length);
-          }
-        }
+        setAvailableModels({});
+        setShowModels(false);
 
         // Notify parent component about the API key change
         onApiKeySaved(apiKey, useOllama);
@@ -283,7 +262,7 @@ export function ApiKeySettings({ onApiKeySaved }: ApiKeySettingsProps) {
 
                   <div className="bg-gray-50 p-3 rounded-md border border-gray-200 max-h-40 overflow-y-auto">
                     <div className="grid grid-cols-1 gap-1">
-                      {Object.entries(availableModels).map(([id, name]) => (
+                      {Object.entries(availableModels || {}).map(([id, name]) => (
                         <div key={id} className="text-xs flex items-center py-1 px-2 rounded hover:bg-gray-100">
                           <span className="font-mono text-gray-500 mr-2">{id.startsWith('ollama:') ? '🖥️' : '☁️'}</span>
                           <span className="flex-grow">{name}</span>

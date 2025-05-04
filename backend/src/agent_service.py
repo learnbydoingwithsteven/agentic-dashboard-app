@@ -45,35 +45,45 @@ def fetch_available_models():
     use_ollama_explicit_false = os.getenv("USE_OLLAMA") == "false"
     api_key = os.getenv("GROQ_API_KEY")
 
-    print(f"Fetching available models. USE_OLLAMA={use_ollama}, USE_OLLAMA_explicit_false={use_ollama_explicit_false}, API_KEY={'[SET]' if api_key else '[NOT SET]'}")
+    # Only print detailed logs when DEBUG is set
+    debug_mode = os.getenv("DEBUG") == "true"
+
+    if debug_mode:
+        print(f"Fetching available models. USE_OLLAMA={use_ollama}, USE_OLLAMA_explicit_false={use_ollama_explicit_false}, API_KEY={'[SET]' if api_key else '[NOT SET]'}")
 
     # Check if we're using Ollama
     if use_ollama:
-        print("USE_OLLAMA is set to true, prioritizing Ollama models...")
+        if debug_mode:
+            print("USE_OLLAMA is set to true, prioritizing Ollama models...")
         if is_ollama_available():
-            print("Checking for local Ollama models...")
+            if debug_mode:
+                print("Checking for local Ollama models...")
             from src.ollama_config import get_ollama_models
             ollama_models = get_ollama_models()
             if ollama_models:
                 models.update(ollama_models)
-                print(f"Found Ollama models: {list([m for m in models.keys() if m.startswith('ollama:')])}")
+                if debug_mode:
+                    print(f"Found Ollama models: {list([m for m in models.keys() if m.startswith('ollama:')])}")
 
                 # If we found Ollama models and USE_OLLAMA is true, we can return early
                 # This prevents trying to use Groq models when Ollama is selected
                 if models:
                     AVAILABLE_MODELS.update(models)
-                    print(f"Using Ollama models: {list(AVAILABLE_MODELS.keys())}")
+                    if debug_mode:
+                        print(f"Using Ollama models: {list(AVAILABLE_MODELS.keys())}")
                     return
-            else:
+            elif debug_mode:
                 print("No Ollama models found or Ollama is not running.")
 
     # If USE_OLLAMA is explicitly set to false, we should only use Groq models
     # This is important for switching from Ollama back to Groq
     if use_ollama_explicit_false:
-        print("USE_OLLAMA is explicitly set to false, using only Groq models...")
+        if debug_mode:
+            print("USE_OLLAMA is explicitly set to false, using only Groq models...")
         try:
             if api_key and api_key != "dummy_key_for_ollama":
-                print(f"Fetching available models from Groq API with API key: {api_key[:5]}...")
+                if debug_mode:
+                    print(f"Fetching available models from Groq API with API key: {api_key[:5]}...")
                 client = Groq(api_key=api_key)
                 models_response = client.models.list()
 
@@ -81,16 +91,18 @@ def fetch_available_models():
                     if "embedding" not in model.id.lower():
                         models[model.id] = f"Groq: {model.id}"
 
-                print(f"Found Groq models: {list(models.keys())}")
+                if debug_mode:
+                    print(f"Found Groq models: {list(models.keys())}")
 
                 if models:
                     AVAILABLE_MODELS.update(models)
-                    print(f"Total available models: {len(AVAILABLE_MODELS)}")
-                    print(f"Available model keys: {list(AVAILABLE_MODELS.keys())}")
+                    if debug_mode:
+                        print(f"Total available models: {len(AVAILABLE_MODELS)}")
+                        print(f"Available model keys: {list(AVAILABLE_MODELS.keys())}")
                     return
-                else:
+                elif debug_mode:
                     print("No Groq models found.")
-            else:
+            elif debug_mode:
                 print("No valid API key for Groq.")
         except Exception as e:
             print(f"Error fetching models from Groq API: {e}")
@@ -100,10 +112,11 @@ def fetch_available_models():
         try:
             api_key = get_api_key()
             # Don't print the API key if it's the dummy key
-            if api_key == "dummy_key_for_ollama":
-                print("Fetching available models from Groq API with dummy key (Ollama mode)...")
-            else:
-                print(f"Fetching available models from Groq API with API key: {api_key[:5]}...")
+            if debug_mode:
+                if api_key == "dummy_key_for_ollama":
+                    print("Fetching available models from Groq API with dummy key (Ollama mode)...")
+                else:
+                    print(f"Fetching available models from Groq API with API key: {api_key[:5]}...")
 
             # Only try to fetch Groq models if we have a real API key
             if api_key != "dummy_key_for_ollama":
@@ -119,15 +132,17 @@ def fetch_available_models():
                     if "embedding" not in model.id.lower():
                         models[model.id] = f"Groq: {model.id}"
 
-                print(f"Found Groq models: {list([m for m in models.keys() if not m.startswith('ollama:')])}")
-            else:
+                if debug_mode:
+                    print(f"Found Groq models: {list([m for m in models.keys() if not m.startswith('ollama:')])}")
+            elif debug_mode:
                 print("Skipping Groq API call with dummy key")
         except Exception as e:
             print(f"Error fetching models from Groq API: {e}")
 
             # If we're using Ollama but couldn't find any Ollama models, add default Ollama models
             if use_ollama:
-                print("Adding default Ollama models as fallback")
+                if debug_mode:
+                    print("Adding default Ollama models as fallback")
                 # Add common Ollama models as defaults
                 default_models = [
                     "llama3", "llama3:8b", "llama3:70b",
@@ -135,27 +150,32 @@ def fetch_available_models():
                 ]
                 for model in default_models:
                     models[f"ollama:{model}"] = f"Ollama: {model}"
-                print(f"Added {len(default_models)} default Ollama models")
+                if debug_mode:
+                    print(f"Added {len(default_models)} default Ollama models")
 
     # If we still don't have any models, check for Ollama as a fallback (if not already checked)
     # Skip this if USE_OLLAMA is explicitly set to false
     if not models and not use_ollama and not use_ollama_explicit_false:
         if is_ollama_available():
-            print("No Groq models found, checking for Ollama models as fallback...")
+            if debug_mode:
+                print("No Groq models found, checking for Ollama models as fallback...")
             from src.ollama_config import get_ollama_models
             ollama_models = get_ollama_models()
             if ollama_models:
                 models.update(ollama_models)
-                print(f"Found Ollama models as fallback: {list(ollama_models.keys())}")
+                if debug_mode:
+                    print(f"Found Ollama models as fallback: {list(ollama_models.keys())}")
 
     # Update available models if we found any
     if models:
         # Update the global variable with the new models
         AVAILABLE_MODELS.update(models)  # Use update instead of reassigning
-        print(f"Total available models: {len(AVAILABLE_MODELS)}")
-        print(f"Available model keys: {list(AVAILABLE_MODELS.keys())}")
+        if debug_mode:
+            print(f"Total available models: {len(AVAILABLE_MODELS)}")
+            print(f"Available model keys: {list(AVAILABLE_MODELS.keys())}")
     else:
-        print("Warning: No models found. Using default Ollama models.")
+        if debug_mode:
+            print("Warning: No models found. Using default models.")
         # Add default Ollama models as a last resort
         # Skip this if USE_OLLAMA is explicitly set to false
         if not use_ollama_explicit_false:
@@ -165,12 +185,14 @@ def fetch_available_models():
             ]
             for model in default_models:
                 AVAILABLE_MODELS[f"ollama:{model}"] = f"Ollama: {model} (default)"
-            print(f"Added {len(default_models)} default Ollama models")
-            print(f"Default model keys: {list(AVAILABLE_MODELS.keys())}")
+            if debug_mode:
+                print(f"Added {len(default_models)} default Ollama models")
+                print(f"Default model keys: {list(AVAILABLE_MODELS.keys())}")
         else:
             # If USE_OLLAMA is explicitly false, add a default Groq model
             AVAILABLE_MODELS["llama-3.1-8b-instant"] = "Groq: llama-3.1-8b-instant (default)"
-            print("Added default Groq model as fallback")
+            if debug_mode:
+                print("Added default Groq model as fallback")
 
 # Initialize available models
 try:
@@ -187,49 +209,28 @@ except Exception as e:
 # Configuration for LLM
 def get_llm_config(model_id):
     use_ollama = os.getenv("USE_OLLAMA") == "true"
+    debug_mode = os.getenv("DEBUG") == "true"
 
-    # If USE_OLLAMA is set, prioritize Ollama models
-    if use_ollama:
-        # If the model_id is already an Ollama model, use it
-        if model_id.startswith("ollama:"):
+    try:
+        # Get the current API key
+        api_key = get_api_key()
+    except ValueError as e:
+        print(f"Error getting API key: {e}")
+        api_key = None
+
+    use_ollama = os.getenv("USE_OLLAMA") == "true"
+    debug_mode = os.getenv("DEBUG") == "true"
+
+    # Prioritize Ollama if USE_OLLAMA is set to "true"
+    if use_ollama or model_id.startswith("ollama:"):
+        if debug_mode:
             print(f"Using Ollama model: {model_id}")
-            return get_ollama_config(model_id)
-
-        # If we're in Ollama mode but the model_id is not an Ollama model,
-        # try to find an equivalent Ollama model or use the first available one
-        print(f"USE_OLLAMA is set but model_id '{model_id}' is not an Ollama model. Looking for Ollama alternatives...")
-
-        # Get available Ollama models
-        ollama_models = [k for k in AVAILABLE_MODELS.keys() if k.startswith("ollama:")]
-
-        if ollama_models:
-            # Try to find a similar model name
-            model_name_lower = model_id.lower()
-            for ollama_model in ollama_models:
-                if model_name_lower in ollama_model.lower():
-                    print(f"Found similar Ollama model: {ollama_model}")
-                    return get_ollama_config(ollama_model)
-
-            # If no similar model found, use the first available Ollama model
-            first_ollama_model = ollama_models[0]
-            print(f"No similar Ollama model found. Using first available: {first_ollama_model}")
-            return get_ollama_config(first_ollama_model)
-        else:
-            # No Ollama models available, try to use a default one
-            default_ollama_model = "ollama:llama3"
-            print(f"No Ollama models found in AVAILABLE_MODELS. Using default: {default_ollama_model}")
-            return get_ollama_config(default_ollama_model)
-
-    # If not using Ollama, or if the model_id is explicitly an Ollama model
-    if model_id.startswith("ollama:"):
-        print(f"Using Ollama model: {model_id}")
         return get_ollama_config(model_id)
     else:
-        # This is a Groq model
-        try:
-            # Get the current API key
-            api_key = get_api_key()
-            print(f"Using Groq model: {model_id}")
+        # Use Groq if USE_OLLAMA is not set and we have a valid API key
+        if api_key:
+            if debug_mode:
+                print(f"Using Groq model: {model_id}")
             return [
                 {
                     "model": model_id,
@@ -239,8 +240,7 @@ def get_llm_config(model_id):
                     "timeout": 60.0
                 }
             ]
-        except ValueError as e:
-            print(f"Error getting API key for Groq: {e}")
+        else:
             # If no API key is available, try to use Ollama as fallback
             if is_ollama_available():
                 # Get available Ollama models
@@ -250,12 +250,14 @@ def get_llm_config(model_id):
                 if ollama_models_dict:
                     # Use the first available Ollama model
                     ollama_model = next(iter(ollama_models_dict.keys()))
-                    print(f"No valid Groq API key, falling back to Ollama model: {ollama_model}")
+                    if debug_mode:
+                        print(f"No valid Groq API key, falling back to Ollama model: {ollama_model}")
                     return get_ollama_config(ollama_model)
                 else:
                     # No Ollama models available, try a default one
                     default_ollama_model = "ollama:llama3"
-                    print(f"No Ollama models found. Trying default: {default_ollama_model}")
+                    if debug_mode:
+                        print(f"No Ollama models found. Trying default: {default_ollama_model}")
                     return get_ollama_config(default_ollama_model)
             else:
                 # No Ollama available either
@@ -268,9 +270,17 @@ current_job_id = None
 cancel_requested = False
 
 # Function to log agent activity in real-time
-def log_agent_activity(timestamp, activity_type, content, step=0):
+def log_agent_activity(timestamp, activity_type, content, step=0, agent_name=None, input_content=None):
     """Log agent activity for debugging and monitoring purposes."""
-    print(f"[AGENT-LOG] {timestamp} - {activity_type} - Step {step}: {content[:100]}...")
+    log_message = f"[AGENT-LOG] {timestamp} - {activity_type} - Step {step}"
+    if agent_name:
+        log_message += f" - {agent_name}"
+    log_message += f": {content[:100]}..."
+    print(log_message)
+
+    # Include input content in the log if available
+    if input_content:
+        print(f"[AGENT-INPUT] {timestamp} - {activity_type} - Step {step} - {agent_name}: {input_content[:100]}...")
 
     # This function could be extended to write to a file, database, or other monitoring system
     # For now, it just prints to the console
@@ -283,6 +293,7 @@ def cancel_current_job():
         timestamp=datetime.now().isoformat(),
         activity_type="cancel",
         content="Job cancellation requested by user",
+        agent_name="User",
         step=0
     )
     return {"status": "success", "message": "Cancellation requested"}
@@ -297,6 +308,7 @@ def reset_agent_state():
         timestamp=datetime.now().isoformat(),
         activity_type="reset",
         content="Agent state reset by user",
+        agent_name="System",
         step=0
     )
     return {"status": "success", "message": "Agent state reset successfully"}
@@ -314,6 +326,7 @@ def get_visualization_suggestions(data_path, user_prompt=None, analyst_model_id=
         timestamp=datetime.now().isoformat(),
         activity_type="job_start",
         content=f"Starting job {current_job_id} with prompt: {user_prompt if user_prompt else 'Initial analysis'}",
+        agent_name="System",
         step=0
     )
 
@@ -339,13 +352,95 @@ def get_visualization_suggestions(data_path, user_prompt=None, analyst_model_id=
         }
         # Removed Code_Executor agent since ECharts runs in browser
 
-        # --- Load Dataset ---
-        df = pd.read_csv(data_path, encoding='latin-1', delimiter=';')
-        # Get some basic info for the agents
-        num_rows = len(df)
-        columns = df.columns.tolist()
-        data_head = df.head().to_string()
-        data_sample_for_prompt = f"Dataset path: {data_path}\nNumber of rows: {num_rows}\nColumns: {columns}\n\nFirst 5 rows:\n{data_head}\n"
+        # --- Load Dataset with flexible format detection ---
+        try:
+            # Try different encodings and delimiters
+            df = None
+            error_messages = []
+
+            for encoding in ['latin-1', 'utf-8', 'cp1252']:
+                for delimiter in [';', ',', '\t']:
+                    try:
+                        df = pd.read_csv(data_path, encoding=encoding, delimiter=delimiter)
+                        print(f"Successfully loaded CSV with encoding={encoding}, delimiter={delimiter}")
+                        break
+                    except Exception as e:
+                        error_messages.append(f"Failed with encoding={encoding}, delimiter={delimiter}: {str(e)}")
+                        continue
+                if df is not None:
+                    break
+
+            # If all attempts failed, try one more time with pandas defaults
+            if df is None:
+                try:
+                    df = pd.read_csv(data_path)
+                    print("Successfully loaded CSV with pandas defaults")
+                except Exception as e:
+                    # Try Excel format as a last resort
+                    try:
+                        df = pd.read_excel(data_path)
+                        print("Successfully loaded Excel file")
+                    except Exception as excel_e:
+                        # If we still can't load the file, raise an error with all the attempts
+                        error_detail = "\n".join(error_messages)
+                        raise ValueError(f"Failed to load dataset with all attempted methods:\n{error_detail}\nExcel attempt: {str(excel_e)}")
+
+            # Auto-detect and convert numeric columns
+            numeric_columns = []
+            for col in df.columns:
+                # Skip columns that are already numeric
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    numeric_columns.append(col)
+                    continue
+
+                # Check if column contains mostly numeric values
+                try:
+                    # Try to convert and count how many values were successfully converted
+                    numeric_series = pd.to_numeric(df[col], errors='coerce')
+                    non_na_count = numeric_series.count()
+                    original_non_na_count = df[col].count()
+
+                    # If at least 70% of values could be converted to numeric, do the conversion
+                    if original_non_na_count > 0 and non_na_count / original_non_na_count >= 0.7:
+                        df[col] = numeric_series
+                        numeric_columns.append(col)
+                        print(f"Converted column '{col}' to numeric type")
+                except:
+                    # Skip columns that cause errors
+                    continue
+
+            # Get some basic info for the agents
+            num_rows = len(df)
+            columns = df.columns.tolist()
+            data_head = df.head().to_string()
+
+            # Add information about numeric columns
+            data_sample_for_prompt = f"""Dataset path: {data_path}
+Number of rows: {num_rows}
+Columns: {columns}
+Numeric columns: {numeric_columns}
+
+First 5 rows:
+{data_head}
+
+Dataset summary:
+{df.describe().to_string()}
+"""
+        except Exception as e:
+            error_message = f"Error loading dataset: {str(e)}"
+            print(error_message)
+            log_agent_activity(
+                timestamp=datetime.now().isoformat(),
+                activity_type="data_loading_error",
+                content=error_message,
+                agent_name="System",
+                step=0
+            )
+            # Instead of using a minimal dataset, return an error response
+            return {
+                "error": error_message,
+                "visualizations": []
+            }
 
         # Check if API key is valid by trying to get it
         try:
@@ -407,36 +502,50 @@ def get_visualization_suggestions(data_path, user_prompt=None, analyst_model_id=
             }
 
         # Define Agents
+        # Create a safe system message without f-strings
+        try:
+            analyst_system_message = """You are an expert data analyst specializing in data visualization and insights.
+Your task is to analyze the provided dataset and identify the most insightful visualizations.
+Consider the columns provided in the data.
+"""
+            # Add dataset-specific information safely
+            analyst_system_message += f"Dataset path: {data_path}\n"
+            analyst_system_message += f"Columns: {columns}\n"
+            analyst_system_message += f"Data sample:\n{data_head}\n"
+        except Exception as e:
+            print(f"Warning: Error formatting analyst system message: {e}")
+            # Fallback to a simpler message without potentially problematic formatting
+            analyst_system_message = """You are an expert data analyst specializing in data visualization and insights.
+Your task is to analyze the provided dataset and identify the most insightful visualizations.
+Consider the columns provided in the data sample."""
+
         data_analyst = autogen.AssistantAgent(
             name="Data_Analyst",
-            system_message=f"""You are an expert data analyst specializing in Italian public finance data.
-Your task is to analyze the provided dataset ({data_path}) and identify the most insightful visualizations.
-Consider the columns: {columns}.
-The data looks like this:
-{data_head}
+            system_message=analyst_system_message + """
 
 IMPORTANT INSTRUCTIONS:
 1. Focus on providing diverse insights that reveal meaningful patterns in the data
 2. Prioritize visualizations that show:
-   - Financial distributions across provinces or expense types
-   - Comparisons between committed amounts (Impegno) and paid amounts (Pagato)
-   - Trends or patterns in financial allocations
-   - Relationships between different financial metrics
+   - Distributions and patterns across categorical variables
+   - Comparisons between different numeric variables
+   - Trends or patterns in the data
+   - Relationships between different metrics
+   - Outliers or anomalies in the data
 
 3. For each visualization, provide DETAILED specifications:
    - The exact column names to use (must match the dataset exactly)
    - Precise data transformations with specific columns and operations
    - Appropriate chart type with justification
-   - Descriptive titles and axis labels in Italian
+   - Descriptive titles and axis labels in appropriate language
    - Sorting and filtering criteria if applicable
    - Color schemes and visual elements recommendations
 
 4. Data Processing Instructions:
-   - Be explicit about grouping: "Group by 'Provincia competente'"
-   - Specify exact aggregation functions: "Sum 'Impegno totale' for each group"
-   - Include sorting: "Sort in descending order by the aggregated 'Impegno totale'"
-   - Mention filtering if needed: "Filter to include only the top 10 provinces by total"
-   - Suggest data transformations: "Calculate the ratio between 'Pagato totale' and 'Impegno totale'"
+   - Be explicit about grouping: "Group by 'Category Column'"
+   - Specify exact aggregation functions: "Sum 'Numeric Column' for each group"
+   - Include sorting: "Sort in descending order by the aggregated value"
+   - Mention filtering if needed: "Filter to include only the top 10 categories by total"
+   - Suggest data transformations: "Calculate the ratio between 'Column A' and 'Column B'"
 
 5. Visualization Enhancement Suggestions:
    - Recommend appropriate number formatting (e.g., thousands separators for currency)
@@ -445,29 +554,36 @@ IMPORTANT INSTRUCTIONS:
    - Suggest tooltip content and formatting
    - Recommend legend positioning and styling
 
-EXAMPLE FORMAT:
-"Visualization 1: Distribuzione dell'Impegno Totale per Provincia
-- Data Processing:
-  * Group by: 'Provincia competente'
-  * Aggregate: Sum 'Impegno totale' for each province
-  * Sort: Descending by total 'Impegno totale'
-  * Limit: Include only top 8 provinces, group others as 'Altre Province'
-- Chart Type: Bar chart (vertical) with data labels
-- Title: 'Distribuzione dell'Impegno Totale per Provincia'
-- X-axis: Province names (rotated 45 degrees for readability)
-- Y-axis: 'Impegno Totale (EUR)' with thousand separators
-- Colors: Blue gradient for bars
-- Tooltip: Show province name and exact value with thousand separators
-- Insight: Reveals which provinces receive the largest financial commitments, highlighting regional disparities in resource allocation"
+6. Data Quality Considerations:
+   - Identify and suggest handling for missing values
+   - Recommend appropriate data type conversions if needed
+   - Suggest filtering out outliers if they distort the visualization
+   - Recommend appropriate binning for continuous variables if needed
+   - Suggest handling for categorical variables with too many unique values
 
-Remember, the Visualization_Coder will implement your suggestions using Apache ECharts, so be as specific as possible about data processing and visual elements.
+EXAMPLE FORMAT:
+"Visualization 1: Distribution of [Metric] by [Category]
+- Data Processing:
+  * Group by: '[Category Column]'
+  * Aggregate: Sum '[Metric Column]' for each category
+  * Sort: Descending by total '[Metric Column]'
+  * Limit: Include only top 8 categories, group others as 'Other'
+- Chart Type: Bar chart (vertical) with data labels
+- Title: 'Distribution of [Metric] by [Category]'
+- X-axis: Category names (rotated 45 degrees for readability)
+- Y-axis: '[Metric] ([Unit])' with thousand separators
+- Colors: Blue gradient for bars
+- Tooltip: Show category name and exact value with thousand separators
+- Insight: Reveals which categories have the highest values, highlighting disparities in distribution"
+
+Remember, the Visualization_Coder will implement your suggestions using Plotly, so be as specific as possible about data processing and visual elements. Adapt your recommendations to the specific dataset provided.
 """,
             llm_config=analyst_llm_config, # Use analyst specific config
         )
 
         visualization_coder = autogen.AssistantAgent(
             name="Visualization_Coder",
-            system_message=f"""You are an expert in creating data visualizations using Python with Plotly.
+            system_message="""You are an expert in creating data visualizations using Python with Plotly.
 
             IMPORTANT: Your task is to write Python code that generates Plotly visualizations based on the dataset and the Data Analyst's specifications.
 
@@ -475,7 +591,7 @@ Remember, the Visualization_Coder will implement your suggestions using Apache E
             1. Always use REAL DATA from the dataset - never use placeholder or dummy data
             2. Process the data appropriately (grouping, aggregation, sorting) as specified by the Data Analyst
             3. Choose appropriate chart types based on the data characteristics and analysis goals
-            4. Use clear, descriptive titles and axis labels (in Italian when appropriate)
+            4. Use clear, descriptive titles and axis labels in the appropriate language
             5. Include tooltips with formatted values for better user interaction
             6. Use appropriate color schemes that are visually appealing and accessible
             7. Format numbers with thousand separators and appropriate decimal places
@@ -493,14 +609,28 @@ Remember, the Visualization_Coder will implement your suggestions using Apache E
             7. Position legends optimally
             8. Use color scales appropriate for the data type
 
+            DATA HANDLING REQUIREMENTS:
+            1. Always check if columns exist before using them
+            2. Handle missing or invalid data gracefully
+            3. Use try/except blocks to handle potential errors
+            4. Verify that numeric columns are actually numeric before operations
+            5. For categorical data, limit to top N categories if there are too many
+            6. Always sort data appropriately for better visualization
+            7. Use appropriate aggregation functions (sum, mean, count, etc.)
+            8. Format dates properly if working with time series data
+
             TECHNICAL REQUIREMENTS:
             1. Write complete Python code that loads the data and creates a Plotly figure
             2. Use pandas for data manipulation (the dataframe is already loaded as 'df')
             3. Use plotly.express (px) for simple charts and plotly.graph_objects (go) for more complex visualizations
             4. Always assign your final figure to a variable named 'fig'
-            5. Include all necessary imports at the top of your code
-            6. Add comments to explain key data processing steps
-            7. Format your code properly with consistent indentation
+            5. Avoid using f-strings with dictionary keys or complex expressions
+            6. Use proper dictionary syntax for labels and other configurations
+            7. Ensure all dictionary keys are properly quoted strings
+            8. Use simple string formatting for axis labels and titles
+            9. Include all necessary imports at the top of your code
+            10. Add comments to explain key data processing steps
+            11. Format your code properly with consistent indentation
 
             Example of well-formatted Plotly code:
             ```python
@@ -559,6 +689,11 @@ Remember, the Visualization_Coder will implement your suggestions using Apache E
             ```
 
             RESPONSE FORMAT:
+            All code MUST be enclosed in a single ```python block.
+            The code MUST be a complete, runnable Python script that generates a Plotly visualization.
+            The code MUST assign the Plotly figure to a variable named 'fig'.
+            Do NOT include any comments outside the ```python block.
+
             ```python
             # Your complete Python code here
             ```
@@ -602,11 +737,20 @@ Remember, the Visualization_Coder will implement your suggestions using Apache E
                 # Add a cancellation message to the log
                 if agent_logs and len(agent_logs) > 0:
                     current_log = agent_logs[-1]
-                    current_log["messages"].append({
-                        "name": "System",
-                        "content": "⚠️ Job cancelled by user. Stopping agent conversation.",
-                        "role": "System"
-                    })
+                    # Check if "messages" key exists in the log entry
+                    if "messages" in current_log:
+                        current_log["messages"].append({
+                            "name": "System",
+                            "content": "⚠️ Job cancelled by user. Stopping agent conversation.",
+                            "role": "System"
+                        })
+                    else:
+                        # Initialize the messages list if it doesn't exist
+                        current_log["messages"] = [{
+                            "name": "System",
+                            "content": "⚠️ Job cancelled by user. Stopping agent conversation.",
+                            "role": "System"
+                        }]
 
                 # Raise an exception to stop the agent conversation
                 raise Exception("Job cancelled by user")
@@ -640,21 +784,34 @@ Remember, the Visualization_Coder will implement your suggestions using Apache E
         groupchat.on_new_message = on_new_message
 
         # --- Chat Initiation ---
-        # Initial request for visualizations
-        initial_request = f"""Analyze the dataset at {data_path} and provide 3 insightful visualizations using Python with Plotly.
-Here is a sample of the data:
-{data_sample_for_prompt}
-
+        # Create initial request message safely without complex f-strings
+        try:
+            initial_request = "Analyze the dataset and provide 3 insightful visualizations using Python with Plotly.\n"
+            initial_request += f"Dataset path: {data_path}\n"
+            initial_request += "Here is a sample of the data:\n"
+            initial_request += data_sample_for_prompt + "\n\n"
+            initial_request += """Data Analyst: Please analyze this dataset and suggest 3 insightful visualizations with clear specifications.
+Visualization Coder: Once you receive the specifications, create Python code with Plotly that generates the visualizations."""
+        except Exception as e:
+            print(f"Warning: Error formatting initial request: {e}")
+            # Fallback to a simpler message
+            initial_request = """Analyze the dataset and provide 3 insightful visualizations using Python with Plotly.
 Data Analyst: Please analyze this dataset and suggest 3 insightful visualizations with clear specifications.
 Visualization Coder: Once you receive the specifications, create Python code with Plotly that generates the visualizations."""
 
-        # Follow-up request if user provides a prompt
-        follow_up_request = f"""The user asks for a specific visualization: "{user_prompt}"
-Analyze this request based on the dataset at {data_path} and create the visualization.
-Here is a sample of the data:
-{data_sample_for_prompt}
-
-Data Analyst: Please analyze this specific request and suggest how to visualize it effectively.
+        # Create follow-up request message safely without complex f-strings
+        try:
+            follow_up_request = f"The user asks for a specific visualization: \"{user_prompt}\"\n"
+            follow_up_request += f"Analyze this request based on the dataset at {data_path} and create the visualization.\n"
+            follow_up_request += "Here is a sample of the data:\n"
+            follow_up_request += data_sample_for_prompt + "\n\n"
+            follow_up_request += """Data Analyst: Please analyze this specific request and suggest how to visualize it effectively.
+Visualization Coder: Once you receive the specifications, create Python code with Plotly that generates the visualization."""
+        except Exception as e:
+            print(f"Warning: Error formatting follow-up request: {e}")
+            # Fallback to a simpler message
+            follow_up_request = f"The user asks for a specific visualization: \"{user_prompt}\"\n"
+            follow_up_request += """Data Analyst: Please analyze this specific request and suggest how to visualize it effectively.
 Visualization Coder: Once you receive the specifications, create Python code with Plotly that generates the visualization."""
 
         # Determine the message to initiate the chat
@@ -665,6 +822,8 @@ Visualization Coder: Once you receive the specifications, create Python code wit
             timestamp=datetime.now().isoformat(),
             activity_type="start",
             content=f"Starting new conversation with prompt: {user_prompt if user_prompt else 'Initial analysis'}",
+            agent_name="User_Proxy",
+            input_content=chat_init_message,
             step=1
         )
 
@@ -689,15 +848,27 @@ Visualization Coder: Once you receive the specifications, create Python code wit
             agent_logs[-1]["timestamp"] = datetime.now().isoformat()
 
             # Ensure all messages are included (in case some were missed by the callback)
-            current_messages = [m.get('content') for m in agent_logs[-1]["messages"]]
-            for msg in all_messages:
-                # Check if this message is already in the log
-                if msg.get('content') not in current_messages:
-                    agent_logs[-1]["messages"].append({
-                        "name": msg.get('role'),
-                        "content": msg.get('content'),
-                        "role": msg.get('role')
-                    })
+            # Check if "messages" key exists in the log entry
+            if "messages" in agent_logs[-1]:
+                current_messages = [m.get('content') for m in agent_logs[-1]["messages"]]
+                for msg in all_messages:
+                    # Check if this message is already in the log
+                    if msg.get('content') not in current_messages:
+                        agent_logs[-1]["messages"].append({
+                            "name": msg.get('role'),
+                            "content": msg.get('content'),
+                            "role": msg.get('role')
+                        })
+            else:
+                # Initialize the messages list if it doesn't exist
+                agent_logs[-1]["messages"] = [
+                    {
+                        "name": m.get('role'),
+                        "content": m.get('content'),
+                        "role": m.get('role')
+                    }
+                    for m in all_messages
+                ]
         else:
             # If for some reason we don't have a log entry yet, create one
             conversation_log = {
@@ -726,6 +897,7 @@ Visualization Coder: Once you receive the specifications, create Python code wit
             timestamp=datetime.now().isoformat(),
             activity_type="complete",
             content=f"Conversation completed with {len(all_messages)} messages",
+            agent_name="System",
             step=len(all_messages) + 1
         )
 
@@ -743,6 +915,7 @@ Visualization Coder: Once you receive the specifications, create Python code wit
                 timestamp=datetime.now().isoformat(),
                 activity_type="cancel_complete",
                 content="Job cancellation completed",
+                agent_name="System",
                 step=len(all_messages) + 2
             )
 
@@ -840,6 +1013,8 @@ Visualization Coder: Once you receive the specifications, create Python code wit
                     timestamp=datetime.now().isoformat(),
                     activity_type="code_execution",
                     content=f"Executed Python code block {i+1} with result: {'success' if result.get('figure') else 'error'}",
+                    agent_name="Code_Executor",
+                    input_content=code_block["code"],
                     step=len(agent_logs) + i + 1
                 )
 
@@ -848,16 +1023,64 @@ Visualization Coder: Once you receive the specifications, create Python code wit
             print("\n=== No valid Python code blocks were found or execution failed. ===")
             print("Creating default visualizations...")
 
+            # Initialize echarts_configs list
+            echarts_configs = []
+
             # Create enhanced default visualizations based on the dataset with real data
             try:
-                df = pd.read_csv(data_path, encoding='latin-1', delimiter=';')
+                # Try to load the dataset with flexible format detection
+                df = None
+                for encoding in ['latin-1', 'utf-8', 'cp1252']:
+                    for delimiter in [';', ',', '\t']:
+                        try:
+                            df = pd.read_csv(data_path, encoding=encoding, delimiter=delimiter)
+                            print(f"Default viz: Successfully loaded CSV with encoding={encoding}, delimiter={delimiter}")
+                            break
+                        except Exception:
+                            continue
+                    if df is not None:
+                        break
 
-                # Ensure numeric columns are properly converted
-                numeric_columns = ['Impegno totale', 'Pagato totale']
-                for col in numeric_columns:
-                    if col in df.columns:
-                        # Convert to numeric, coercing errors to NaN
-                        df[col] = pd.to_numeric(df[col], errors='coerce')
+                # If all attempts failed, try with pandas defaults
+                if df is None:
+                    try:
+                        df = pd.read_csv(data_path)
+                        print("Default viz: Successfully loaded CSV with pandas defaults")
+                    except Exception:
+                        try:
+                            df = pd.read_excel(data_path)
+                            print("Default viz: Successfully loaded Excel file")
+                        except Exception as e:
+                            print(f"Default viz: Failed to load dataset: {str(e)}")
+                            # Create a minimal dataset for testing
+                            df = pd.DataFrame({
+                                'Column1': [1, 2, 3, 4, 5],
+                                'Column2': ['A', 'B', 'C', 'D', 'E']
+                            })
+
+                # Auto-detect numeric columns
+                numeric_columns = []
+                for col in df.columns:
+                    # Skip columns that are already numeric
+                    if pd.api.types.is_numeric_dtype(df[col]):
+                        numeric_columns.append(col)
+                        continue
+
+                    # Check if column contains mostly numeric values
+                    try:
+                        # Try to convert and count how many values were successfully converted
+                        numeric_series = pd.to_numeric(df[col], errors='coerce')
+                        non_na_count = numeric_series.count()
+                        original_non_na_count = df[col].count()
+
+                        # If at least 70% of values could be converted to numeric, do the conversion
+                        if original_non_na_count > 0 and non_na_count / original_non_na_count >= 0.7:
+                            df[col] = numeric_series
+                            numeric_columns.append(col)
+                            print(f"Default viz: Converted column '{col}' to numeric type")
+                    except:
+                        # Skip columns that cause errors
+                        continue
 
                 # Default visualization 1: Enhanced bar chart of total commitments by province
                 if 'Provincia competente' in df.columns and 'Impegno totale' in df.columns:
@@ -1090,34 +1313,43 @@ Visualization Coder: Once you receive the specifications, create Python code wit
                     }
                 ]
 
-        # Ensure all configs have required properties for ECharts
-        for i, config in enumerate(echarts_configs):
-            # Make sure each config has at least these basic properties
-            if not config.get('title'):
-                config['title'] = {"text": f"Visualization {i+1}"}
+            # Ensure all configs have required properties for ECharts BEFORE creating the response
+            for i, config in enumerate(echarts_configs):
+                # Make sure each config has at least these basic properties
+                if not config.get('title'):
+                    config['title'] = {"text": f"Visualization {i+1}"}
 
-            if not config.get('tooltip'):
-                config['tooltip'] = {}
+                if not config.get('tooltip'):
+                    config['tooltip'] = {}
 
-            if not config.get('xAxis'):
-                config['xAxis'] = {"type": "category", "data": []}
+                if not config.get('xAxis'):
+                    config['xAxis'] = {"type": "category", "data": []}
 
-            if not config.get('yAxis'):
-                config['yAxis'] = {"type": "value"}
+                if not config.get('yAxis'):
+                    config['yAxis'] = {"type": "value"}
 
-            if not config.get('series') or not isinstance(config.get('series'), list) or len(config.get('series')) == 0:
-                config['series'] = [{"type": "bar", "data": []}]
+                if not config.get('series') or not isinstance(config.get('series'), list) or len(config.get('series')) == 0:
+                    config['series'] = [{"type": "bar", "data": []}]
 
-            # Ensure each series has a type and data
-            for series in config.get('series', []):
-                if not series.get('type'):
-                    series['type'] = 'bar'
-                if not series.get('data') or not isinstance(series.get('data'), list):
-                    series['data'] = []
+                # Ensure each series has a type and data
+                for series in config.get('series', []):
+                    if not series.get('type'):
+                        series['type'] = 'bar'
+                    if not series.get('data') or not isinstance(series.get('data'), list):
+                        series['data'] = []
 
-        # Prepare the final response
-        response = {
-            "visualizations": [r.get('figure', {}) for r in visualization_results if r.get('figure')],
+            # Create the response using the validated ECharts configs
+            response = {
+                "visualizations": echarts_configs,
+                "code_blocks": [],
+                "outputs": [],
+                "errors": []
+            }
+        else:
+            # This else block corresponds to the 'if plotly_code_blocks:' condition (Line 995)
+            # If Plotly code was executed successfully, prepare the response using Plotly figures
+            response = {
+                "visualizations": [r.get('figure', {}) for r in visualization_results if r.get('figure')],
             "code_blocks": [r.get('code', '') for r in visualization_results],
             "outputs": [r.get('output', '') for r in visualization_results],
             "errors": [r.get('error', '') for r in visualization_results]
@@ -1139,16 +1371,26 @@ Visualization Coder: Once you receive the specifications, create Python code wit
                 agent_logs[-1]["status"] = "error"
 
             # Add error message to the log
-            agent_logs[-1]["messages"].append({
-                "name": "System",
-                "content": f"⚠️ Error: {str(e)}",
-                "role": "System"
-            })
+            # Check if "messages" key exists in the log entry
+            if "messages" in agent_logs[-1]:
+                agent_logs[-1]["messages"].append({
+                    "name": "System",
+                    "content": f"⚠️ Error: {str(e)}",
+                    "role": "System"
+                })
+            else:
+                # Initialize the messages list if it doesn't exist
+                agent_logs[-1]["messages"] = [{
+                    "name": "System",
+                    "content": f"⚠️ Error: {str(e)}",
+                    "role": "System"
+                }]
 
         log_agent_activity(
             timestamp=datetime.now().isoformat(),
             activity_type="error",
             content=f"Job failed with error: {str(e)}",
+            agent_name="System",
             step=0
         )
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { safeArray } from '@/lib/arrayUtils';
 
 interface Message {
   name: string | null;
@@ -22,11 +23,16 @@ interface AgentConversationMonitorProps {
 }
 
 export function AgentConversationMonitor({ logs }: AgentConversationMonitorProps) {
+  // State to track if real-time monitoring is active
+  const [isRealTimeActive, setIsRealTimeActive] = useState(true);
   // Reference to the container div for auto-scrolling
   const containerRef = useRef<HTMLDivElement>(null);
 
   // State to track if new logs have been added
   const [newLogsAdded, setNewLogsAdded] = useState(false);
+
+  // State to track if auto-scroll is enabled
+  const [autoScroll, setAutoScroll] = useState(true);
 
   // Track previous log count to detect new logs
   const prevLogCountRef = useRef(logs.length);
@@ -37,8 +43,8 @@ export function AgentConversationMonitor({ logs }: AgentConversationMonitorProps
     if (logs.length > prevLogCountRef.current) {
       setNewLogsAdded(true);
 
-      // Scroll to bottom
-      if (containerRef.current) {
+      // Scroll to bottom if auto-scroll is enabled
+      if (containerRef.current && autoScroll) {
         containerRef.current.scrollTop = containerRef.current.scrollHeight;
       }
     }
@@ -52,15 +58,30 @@ export function AgentConversationMonitor({ logs }: AgentConversationMonitorProps
     }, 3000);
 
     return () => clearTimeout(timer);
-  }, [logs.length]);
+  }, [logs.length, autoScroll]);
+
+  // Handle scroll events to detect when user manually scrolls
+  const handleScroll = () => {
+    if (!containerRef.current) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+
+    // Only change auto-scroll if it's different from current state
+    if (isAtBottom !== autoScroll) {
+      setAutoScroll(isAtBottom);
+    }
+  };
+
 
   return (
     <div
       ref={containerRef}
       className={`overflow-y-auto max-h-[calc(100vh-200px)] space-y-3 text-xs ${newLogsAdded ? 'scroll-smooth' : ''}`}
+      onScroll={handleScroll}
     >
       {logs.length === 0 && <p className="text-gray-500 italic">No agent activity logged yet.</p>}
-      {logs.map((log, index) => (
+      {safeArray(logs).map((log, index) => (
         <div
           key={`log-${index}-${log.timestamp}`}
           className={`mb-4 p-3 border rounded border-gray-200 bg-white shadow-sm ${
@@ -102,7 +123,7 @@ export function AgentConversationMonitor({ logs }: AgentConversationMonitorProps
             </div>
           </div>
           <div className="space-y-2 pl-2 border-l-2 border-gray-200">
-            {log.messages.map((msg, msgIndex) => {
+            {safeArray(log.messages).map((msg, msgIndex) => {
               // Determine agent role and styling
               const roleColors = {
                 'User_Proxy': 'bg-blue-50 border-blue-200 text-blue-800',

@@ -2,6 +2,8 @@
 
 import sys
 import os
+import json
+import time
 from datetime import datetime
 # Add the project root to the Python path to allow absolute imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -25,6 +27,8 @@ from src.agent_service import get_visualization_suggestions, AVAILABLE_MODELS, g
 from src.api_key_middleware import validate_api_key
 # Import code execution service
 from src.code_execution_service import execute_plotly_code
+# Import data exploration service
+from src.data_exploration_service import get_dataset_visualizations
 
 app = Flask(__name__)
 
@@ -43,7 +47,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # In a real multi-user app, this would need a more robust session/user-based mechanism
 last_uploaded_file_path = None
 
-def log_agent_activity(timestamp, activity_type, content, step):
+def log_agent_activity(timestamp, activity_type, content, step, agent_name=None, input_content=None):
     global agent_logs
     log_entry = {
         "timestamp": timestamp,
@@ -51,6 +55,13 @@ def log_agent_activity(timestamp, activity_type, content, step):
         "content": content,
         "step": step
     }
+
+    # Add optional fields if provided
+    if agent_name:
+        log_entry["agent_name"] = agent_name
+    if input_content:
+        log_entry["input_content"] = input_content
+
     agent_logs.append(log_entry)
     # Keep only the last 1000 logs
     if len(agent_logs) > 1000:
@@ -113,7 +124,8 @@ def root():
             "check_api_key": "/api/check_api_key",
             "cancel_job": "/api/cancel",
             "reset": "/api/reset",
-            "execute_code": "/api/execute_code"
+            "execute_code": "/api/execute_code",
+            "data_exploration": "/api/data_exploration"
         }
     })
 
@@ -138,7 +150,8 @@ def cancel_job():
             timestamp=datetime.now().isoformat(),
             activity_type="cancel_request",
             content=f"User requested cancellation of job {current_job_id or 'unknown'}",
-            step=0
+            step=0,
+            agent_name="User"
         )
 
         # Cancel the current job
@@ -165,7 +178,8 @@ def reset_backend():
             timestamp=datetime.now().isoformat(),
             activity_type="reset_request",
             content="User requested backend reset",
-            step=0
+            step=0,
+            agent_name="User"
         )
 
         # Reset agent logs and state
@@ -257,6 +271,41 @@ def get_admin_logs():
         "logs": agent_logs,
         "available_models": AVAILABLE_MODELS
     })
+
+@app.route("/api/admin/logs/stream", methods=["GET"])
+@validate_api_key
+def stream_admin_logs():
+    """Stream agent activity logs in real-time using Server-Sent Events."""
+    def generate():
+        # Send the current logs as initial data
+        yield f"data: {json.dumps({'logs': agent_logs, 'available_models': AVAILABLE_MODELS})}\n\n"
+        
+        # Keep track of the last log count we sent
+        last_count = len(agent_logs)
+        
+        while True:
+            # Check if there are new logs
+            current_count = len(agent_logs)
+            if current_count > last_count:
+                # Send only the new logs
+                yield f"data: {json.dumps({'logs': agent_logs[last_count:], 'type': 'append'})}\n\n"
+                last_count = current_count
+            
+            # Send a heartbeat every 15 seconds to keep the connection alive
+            yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': datetime.now().isoformat()})}\n\n"
+            
+            # Sleep to avoid excessive CPU usage
+            time.sleep(1)
+    
+    response = app.response_class(
+        response=generate(),
+        status=200,
+        mimetype='text/event-stream'
+    )
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['X-Accel-Buffering'] = 'no'  # Disable buffering for Nginx
+    response.headers['Connection'] = 'keep-alive'
+    return response
 
 @app.route("/api/visualizations", methods=["GET"])
 @validate_api_key
@@ -531,7 +580,9 @@ def get_prompted_visualization():
         timestamp=datetime.now().isoformat(),
         activity_type="action",
         content=f"Requesting visualization for prompt: {user_prompt}",
-        step=len(agent_logs) + 1
+        step=len(agent_logs) + 1,
+        agent_name="User",
+        input_content=user_prompt
     )
 
     try:
@@ -586,7 +637,9 @@ def execute_code_endpoint():
             timestamp=datetime.now().isoformat(),
             activity_type="code_execution",
             content=f"User requested code execution with {len(code)} characters of code",
-            step=0
+            step=0,
+            agent_name="User",
+            input_content=code
         )
 
         # Execute the code
@@ -598,14 +651,18 @@ def execute_code_endpoint():
                 timestamp=datetime.now().isoformat(),
                 activity_type="code_execution_error",
                 content=f"Code execution failed: {result['error'][:200]}...",
-                step=1
+                step=1,
+                agent_name="Code_Executor",
+                input_content=code
             )
         else:
             log_agent_activity(
                 timestamp=datetime.now().isoformat(),
                 activity_type="code_execution_success",
                 content=f"Code execution succeeded, generated Plotly figure",
-                step=1
+                step=1,
+                agent_name="Code_Executor",
+                input_content=code
             )
 
         return jsonify(result), 200 if not result.get('error') else 400
@@ -619,7 +676,9 @@ def execute_code_endpoint():
             timestamp=datetime.now().isoformat(),
             activity_type="code_execution_error",
             content=f"Code execution failed with exception: {error_message}",
-            step=1
+            step=1,
+            agent_name="Code_Executor",
+            input_content=code
         )
 
         return jsonify({
@@ -628,6 +687,65 @@ def execute_code_endpoint():
             "figure": {},
             "code": data.get('code', '') if 'data' in locals() else ''
         }), 500
+
+@app.route("/api/data_exploration", methods=["GET"])
+@validate_api_key
+def explore_data():
+    """Generate ECharts visualizations for the uploaded dataset."""
+    global last_uploaded_file_path
+
+    if not last_uploaded_file_path:
+        # Try using the default dataset if no file uploaded yet
+        # Construct path relative to the backend directory
+        backend_dir = os.path.dirname(os.path.dirname(__file__))
+        default_filename = '2015---Friuli-Venezia-Giulia---Gestione-finanziaria-Spese-Enti-Locali.csv'
+        default_path = os.path.join(backend_dir, 'uploads', default_filename)
+        if os.path.exists(default_path):
+            last_uploaded_file_path = default_path
+            print(f"No file uploaded, using default: {default_path}")
+        else:
+            return jsonify({"error": "No dataset has been uploaded or found."}), 400
+
+    if not os.path.exists(last_uploaded_file_path):
+        return jsonify({"error": f"Dataset file not found at {last_uploaded_file_path}"}), 404
+
+    try:
+        # Log the exploration request
+        log_agent_activity(
+            timestamp=datetime.now().isoformat(),
+            activity_type="data_exploration",
+            content=f"Generating ECharts visualizations for {os.path.basename(last_uploaded_file_path)}",
+            step=0,
+            agent_name="System"
+        )
+
+        # Generate visualizations
+        result = get_dataset_visualizations(last_uploaded_file_path)
+
+        # Log success
+        log_agent_activity(
+            timestamp=datetime.now().isoformat(),
+            activity_type="data_exploration_complete",
+            content=f"Successfully generated ECharts visualizations",
+            step=0,
+            agent_name="System"
+        )
+
+        return jsonify(result), 200
+    except Exception as e:
+        error_message = str(e)
+        print(f"Error generating ECharts visualizations: {error_message}")
+
+        # Log error
+        log_agent_activity(
+            timestamp=datetime.now().isoformat(),
+            activity_type="data_exploration_error",
+            content=f"Failed to generate ECharts visualizations: {error_message}",
+            step=0,
+            agent_name="System"
+        )
+
+        return jsonify({"error": f"Failed to generate ECharts visualizations: {error_message}"}), 500
 
 if __name__ == '__main__':
     # Run on 0.0.0.0 to be accessible externally if needed (e.g., via deploy_expose_port)
