@@ -378,7 +378,25 @@ export default function Home() {
         throw new Error(vizData.error || `Fetching visualizations failed with status: ${vizResponse.status}`);
       }
 
-      setVisualizations(vizData.visualizations || []);
+      // Process response for Plotly visualizations (similar to handlePrompt)
+      if (vizData.code_blocks && Array.isArray(vizData.code_blocks)) {
+        const visualizations = Array.isArray(vizData.visualizations) ? vizData.visualizations : [];
+        const plotlyViz = visualizations.map((figure: any, index: number) => ({
+          figure,
+          code: vizData.code_blocks[index] || '',
+          output: vizData.outputs && vizData.outputs[index] ? vizData.outputs[index] : '',
+          error: vizData.errors && vizData.errors[index] ? vizData.errors[index] : ''
+        }));
+        setPlotlyVisualizations(Array.isArray(plotlyViz) ? plotlyViz : []);
+        setVisualizations([]); // Clear legacy ECharts state
+      } else {
+        // Fallback or handle potential legacy ECharts response if needed
+        console.warn("Received unexpected data format for initial visualizations. Expected Plotly structure.");
+        setPlotlyVisualizations([]);
+        setVisualizations(vizData.visualizations || []); // Keep setting ECharts state as fallback? Or clear it? Let's clear it.
+        // setError("Received unexpected data format from backend."); // Optionally set an error
+      }
+
       fetchAdminLogs(); // Refresh logs after successful operation
 
     } catch (err: any) {
@@ -652,7 +670,12 @@ export default function Home() {
         {showDataExploration ? (
           /* Data Exploration View */
           <div className="flex-1">
-            <DataExplorationPageDebug onBack={() => setShowDataExploration(false)} />
+            {/* Pass apiKey and useOllama as props */}
+            <DataExplorationPageDebug
+              apiKey={apiKey}
+              useOllama={useOllama}
+              onBack={() => setShowDataExploration(false)}
+            />
           </div>
         ) : (
           /* Regular Agent Visualization View */

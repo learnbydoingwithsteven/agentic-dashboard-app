@@ -1,7 +1,7 @@
 # Agentic Dashboard App
 
 <div align="center">
-  <img src="./assets/image2.png" alt="Agentic Dashboard App" width="800"/>
+  <img src="./assets/image2.png" alt="Agentic Dashboard App Main Interface" width="800"/>
   <br>
   <a href="https://github.com/learnbydoingwithsteven/agentic-dashboard-app/stargazers"><img src="https://img.shields.io/github/stars/learnbydoingwithsteven/agentic-dashboard-app" alt="Stars Badge"/></a>
   <a href="https://github.com/learnbydoingwithsteven/agentic-dashboard-app/network/members"><img src="https://img.shields.io/github/forks/learnbydoingwithsteven/agentic-dashboard-app" alt="Forks Badge"/></a>
@@ -113,6 +113,10 @@ Each agent can be configured to use different LLM models, allowing you to optimi
   <img src="./assets/image.png" alt="Agent Conversation Monitor" width="600"/>
 </div>
 
+<div align="center">
+  <img src="./assets/image3.png" alt="Agent Workflow Visualization" width="600"/>
+</div>
+
 ### 📊 Visualization Capabilities
 
 - **Automatic Visualization Generation**: Get instant insights without writing code
@@ -121,6 +125,14 @@ Each agent can be configured to use different LLM models, allowing you to optimi
 - **Interactive Plots**: Explore data with interactive Plotly and ECharts visualizations
 - **Data Exploration**: Automatic generation of summary statistics and basic visualizations
 - **Horizontally Scrollable Tables**: View large datasets comfortably with responsive tables
+
+<div align="center">
+  <img src="./assets/image4.png" alt="Interactive Data Visualization" width="600"/>
+</div>
+
+<div align="center">
+  <img src="./assets/image5.png" alt="Data Exploration Interface" width="600"/>
+</div>
 
 ### 🔄 Workflow
 
@@ -333,6 +345,10 @@ Each agent can be configured to use different LLM models, allowing you to optimi
   - Refresh the page if the UI remains unresponsive
 
 ### Debugging Tips
+
+<div align="center">
+  <img src="./assets/image3.png" alt="System Architecture for Debugging" width="600"/>
+</div>
 
 1. **Check the backend logs**:
    - Look for error messages in the terminal where the backend is running

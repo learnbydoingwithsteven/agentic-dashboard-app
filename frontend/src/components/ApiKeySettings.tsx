@@ -7,9 +7,9 @@ import { Eye, EyeOff, Save, Server, Check, Loader2 } from 'lucide-react';
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
-// Local storage keys
-const API_KEY_STORAGE_KEY = 'groq_api_key';
-const USE_OLLAMA_STORAGE_KEY = 'use_ollama';
+// Storage keys
+const API_KEY_STORAGE_KEY = 'groq_api_key'; // Used with sessionStorage (temporary)
+const USE_OLLAMA_STORAGE_KEY = 'use_ollama'; // Used with localStorage (persistent)
 
 interface ApiKeySettingsProps {
   onApiKeySaved: (apiKey: string, useOllama: boolean) => void;
@@ -25,9 +25,11 @@ export function ApiKeySettings({ onApiKeySaved }: ApiKeySettingsProps) {
   const [availableModels, setAvailableModels] = useState<Record<string, string>>({});
   const [showModels, setShowModels] = useState<boolean>(false);
 
-  // Load settings from localStorage on component mount
+  // Load settings on component mount
   useEffect(() => {
-    const savedApiKey = localStorage.getItem(API_KEY_STORAGE_KEY);
+    // API key is stored in sessionStorage (temporary)
+    const savedApiKey = sessionStorage.getItem(API_KEY_STORAGE_KEY);
+    // Ollama setting is stored in localStorage (persistent)
     const savedUseOllama = localStorage.getItem(USE_OLLAMA_STORAGE_KEY) === 'true';
 
     if (savedApiKey) {
@@ -107,12 +109,12 @@ export function ApiKeySettings({ onApiKeySaved }: ApiKeySettingsProps) {
       const isValid = await validateApiKey(apiKey, useOllama);
 
       if (isValid) {
-        // Save API key if provided
+        // Save API key to sessionStorage (temporary) if provided
         if (apiKey.trim()) {
-          localStorage.setItem(API_KEY_STORAGE_KEY, apiKey);
+          sessionStorage.setItem(API_KEY_STORAGE_KEY, apiKey);
         }
 
-        // Save Ollama setting
+        // Save Ollama setting to localStorage (persistent)
         localStorage.setItem(USE_OLLAMA_STORAGE_KEY, useOllama.toString());
 
         setIsSaved(true);
@@ -215,9 +217,14 @@ export function ApiKeySettings({ onApiKeySaved }: ApiKeySettingsProps) {
                   {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>
               </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Get your API key from <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Groq Console</a>
-              </p>
+              <div className="space-y-1 mt-1">
+                <p className="text-xs text-gray-500">
+                  Get your API key from <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Groq Console</a>
+                </p>
+                <p className="text-xs text-amber-600">
+                  <strong>Note:</strong> For security, API keys are only stored temporarily in your browser session and will be cleared when you close the browser.
+                </p>
+              </div>
             </div>
           )}
 
@@ -316,7 +323,7 @@ export function ApiKeySettings({ onApiKeySaved }: ApiKeySettingsProps) {
 
 // Export utility functions to get the API key and Ollama setting
 export function getApiKey(): string | null {
-  return localStorage.getItem(API_KEY_STORAGE_KEY);
+  return sessionStorage.getItem(API_KEY_STORAGE_KEY);
 }
 
 export function getUseOllama(): boolean {

@@ -4,25 +4,26 @@ import { useState, useEffect } from 'react';
 const API_KEY_STORAGE_KEY = 'groq_api_key';
 const USE_OLLAMA_STORAGE_KEY = 'use_ollama';
 
-// Function to get API key from localStorage
+// Function to get API key from sessionStorage (temporary storage)
 export const getApiKey = (): string | null => {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem(API_KEY_STORAGE_KEY);
+  return sessionStorage.getItem(API_KEY_STORAGE_KEY);
 };
 
 // Function to get useOllama setting from localStorage
+// We keep this in localStorage as it's not sensitive
 export const getUseOllama = (): boolean => {
   if (typeof window === 'undefined') return false;
   return localStorage.getItem(USE_OLLAMA_STORAGE_KEY) === 'true';
 };
 
-// Function to save API key to localStorage
+// Function to save API key to sessionStorage (temporary storage)
 export const saveApiKey = (apiKey: string | null): void => {
   if (typeof window === 'undefined') return;
   if (apiKey) {
-    localStorage.setItem(API_KEY_STORAGE_KEY, apiKey);
+    sessionStorage.setItem(API_KEY_STORAGE_KEY, apiKey);
   } else {
-    localStorage.removeItem(API_KEY_STORAGE_KEY);
+    sessionStorage.removeItem(API_KEY_STORAGE_KEY);
   }
 };
 

@@ -13,13 +13,16 @@ const API_BASE_URL = "http://localhost:5001/api";
 
 interface DataExplorationProps {
   onBack?: () => void;
+  apiKey: string | null; // Add apiKey prop
+  useOllama: boolean; // Add useOllama prop
 }
 
-const DataExplorationPageDebug: React.FC<DataExplorationProps> = ({ onBack }) => {
+const DataExplorationPageDebug: React.FC<DataExplorationProps> = ({ onBack, apiKey, useOllama }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<any>(null);
-  const { apiKey } = useApiKey();
+  // Remove useApiKey hook, use props instead
+  // const { apiKey } = useApiKey();
 
   const fetchDataExploration = async () => {
     console.log("DataExplorationPage: Starting data exploration fetch");
@@ -29,9 +32,9 @@ const DataExplorationPageDebug: React.FC<DataExplorationProps> = ({ onBack }) =>
     try {
       const limit = 100; // Limit the number of rows to fetch
 
-      // Check if we're using Ollama
-      const useOllama = localStorage.getItem('useOllama') === 'true';
+      // Use props for API key and Ollama setting
       console.log(`DataExplorationPage: Using Ollama: ${useOllama}`);
+      console.log(`DataExplorationPage: API Key: ${apiKey ? 'Present' : 'Missing'}`);
 
       const url = `${API_BASE_URL}/data_exploration?limit=${limit}`;
       console.log(`DataExplorationPage: Fetching from URL: ${url}`);
@@ -87,19 +90,16 @@ const DataExplorationPageDebug: React.FC<DataExplorationProps> = ({ onBack }) =>
   };
 
   useEffect(() => {
-    // Only fetch if we have an API key or if we're using Ollama
-    // This prevents the component from making API calls without authentication
-    const useOllama = localStorage.getItem('useOllama') === 'true';
-
+    // Use props for the condition
     if (apiKey || useOllama) {
       console.log("DataExplorationPage: Fetching data with API key or Ollama");
       fetchDataExploration();
     } else {
-      // Set an error message if no API key is available
       console.log("DataExplorationPage: No API key or Ollama configuration found");
-      setError("API key is required. Please configure your API key in the settings.");
+      setError("API key or Ollama configuration is required. Please configure your settings first.");
     }
-  }, [apiKey]);
+    // Depend on props
+  }, [apiKey, useOllama]);
 
   // Validate data structure when it changes
   useEffect(() => {
@@ -155,7 +155,8 @@ const DataExplorationPageDebug: React.FC<DataExplorationProps> = ({ onBack }) =>
               </Button>
             )}
           </div>
-          {!apiKey && localStorage.getItem('useOllama') !== 'true' && (
+          {/* Use props for the condition */}
+          {!apiKey && !useOllama && (
             <div className="mt-2 text-sm">
               <p>No API key or Ollama configuration found. Please configure your API settings first.</p>
             </div>

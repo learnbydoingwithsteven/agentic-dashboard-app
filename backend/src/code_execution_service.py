@@ -200,6 +200,34 @@ def execute_code(code: str, data_path: Optional[str] = None) -> Tuple[Dict[str, 
         # Get the output
         stdout = stdout_buffer.getvalue()
         stderr = stderr_buffer.getvalue()
+        
+        # Enhance error messages for column not found errors
+        if "KeyError" in stderr or "not in index" in stderr:
+            # Try to extract the column name from the error
+            key_error_pattern = r"KeyError: ['\"]([^'\"]*)['\"]|\['([^']+)'\]|\[\"([^\"]+)\"\]"
+            key_match = re.search(key_error_pattern, stderr)
+            
+            if key_match and 'df' in execution_vars:
+                # Get the first non-None group (the column name)
+                missing_column = next((g for g in key_match.groups() if g is not None), "")
+                
+                if missing_column:
+                    # Get actual column names from the dataframe
+                    df = execution_vars.get('df')
+                    if df is not None and hasattr(df, 'columns'):
+                        available_columns = list(df.columns)
+                        
+                        # Check if the error might be related to common column name mistakes
+                        if missing_column == 'Anno' and 'Esercizio Finanziario' in available_columns:
+                            stderr = f"Columns not found for '{missing_column}'. Did you mean 'Esercizio Finanziario'?"
+                        elif missing_column == 'Importo totale' and any('Previsioni risultanti' in col for col in available_columns):
+                            financial_cols = [col for col in available_columns if 'Previsioni risultanti' in col or 'Variazioni proposte' in col]
+                            stderr = f"Columns not found for '{missing_column}'. Try using financial columns like: {', '.join(financial_cols[:3])}"
+                        else:
+                            # Provide a general list of available columns
+                            stderr = f"Columns not found for '{missing_column}'. Available columns include: {', '.join(available_columns[:5])}"
+                            if len(available_columns) > 5:
+                                stderr += f" and {len(available_columns) - 5} more."
 
         # Check if a figure was created
         fig = execution_vars.get('fig')
@@ -248,11 +276,14 @@ def execute_plotly_code(code: str, data_path: Optional[str] = None) -> Dict[str,
     try:
         # Fix common string formatting issues in the code
         fixed_code = code
+        
+        # Import re module here to ensure it's accessible in this scope
+        # This avoids potential issues with the module not being available
+        import re as regex_module
 
         # Fix common issues with labels dictionary in Plotly
         if "labels=" in fixed_code:
             # Look for problematic labels dictionary patterns
-            import re
 
             # Pattern 1: Multiple keys without proper formatting
             # Example: 'key1', 'key2': 'value'
@@ -316,6 +347,20 @@ def execute_plotly_code(code: str, data_path: Optional[str] = None) -> Dict[str,
                 except Exception as e:
                     print(f"Error fixing f-string: {e}")
 
+        # Check for common column name errors in the code before execution
+        column_pattern = r'df\[["\']([^"\']*)["\']]\]'  # Pattern to find column references
+        column_references = regex_module.findall(column_pattern, fixed_code)
+        
+        # Add common Italian financial dataset column names to the list of numeric columns
+        # This helps with the specific dataset being used in the application
+        common_numeric_columns = [
+            'Impegno totale', 'Pagato totale', 'amount', 'value', 'price',
+            'cost', 'revenue', 'sales', 'quantity', 'count', 'total',
+            'Esercizio Finanziario', 'Numero Nota', 'Stato di Previsione',
+            'S2 Variazioni proposte CP A1', 'S2 Previsioni risultanti CP A1',
+            'Bilancio Int. Prev. ris. CP A1', 'Bilancio Int. Prev. ris. CS A1'
+        ]
+        
         # Execute the code with potential fixes
         sanitized_code = sanitize_code(fixed_code)
         fig_json, stdout, stderr = execute_code(sanitized_code, data_path)
@@ -331,6 +376,28 @@ def execute_plotly_code(code: str, data_path: Optional[str] = None) -> Dict[str,
                 fig_json, stdout, stderr = fig_json_orig, stdout_orig, stderr_orig
                 sanitized_code = sanitized_original
 
+        # Check for column not found errors and provide more helpful error messages
+        if "KeyError" in stderr:
+            # Extract the column name from the error message
+            key_error_pattern = r"KeyError: ['\"]([^'\"]*)['\"]"  # Pattern to extract column name from KeyError
+            key_match = regex_module.search(key_error_pattern, stderr)
+            
+            if key_match:
+                missing_column = key_match.group(1)
+                # Create a more helpful error message with available columns
+                if 'df' in locals() and data_path and os.path.exists(data_path):
+                    try:
+                        # Try to load the dataframe to get column names
+                        temp_df = pd.read_csv(data_path)
+                        available_columns = list(temp_df.columns)
+                        # Format a helpful error message with available columns
+                        stderr = f"Columns not found for '{missing_column}'. Available columns are: {', '.join(available_columns[:10])}"
+                        if len(available_columns) > 10:
+                            stderr += f" and {len(available_columns) - 10} more."
+                    except Exception:
+                        # If we can't load the dataframe, use a generic message
+                        stderr = f"Columns not found for '{missing_column}'. Please check your column names."
+        
         # If we still have an error with "Invalid format specifier", try a more aggressive fix
         if "Invalid format specifier" in stderr:
             print("Detected 'Invalid format specifier' error, applying aggressive fix...")
@@ -430,6 +497,30 @@ def execute_plotly_code(code: str, data_path: Optional[str] = None) -> Dict[str,
                 fig_json, stdout, stderr = fig_json_agg, stdout_agg, stderr_agg
                 sanitized_code = sanitized_aggressive
 
+        # Check for common visualization errors and provide more helpful messages
+        if not fig_json and stderr:
+            # Check for common column name errors in the error message
+            if "KeyError" in stderr or "not in index" in stderr:
+                column_error_pattern = r"\['([^']+)'\]|\[\"([^\"]+)\"\]|KeyError: ['\"]([^'\"]*)['\"]"  # Pattern to extract column name
+                column_match = regex_module.search(column_error_pattern, stderr)
+                
+                if column_match:
+                    # Get the first non-None group (the column name)
+                    missing_column = next((g for g in column_match.groups() if g is not None), "")
+                    
+                    # Try to load the dataframe to get column names for better error message
+                    if data_path and os.path.exists(data_path):
+                        try:
+                            temp_df = pd.read_csv(data_path)
+                            available_columns = list(temp_df.columns)
+                            # Format a helpful error message with available columns
+                            stderr = f"Columns not found for '{missing_column}'. Available columns include: {', '.join(available_columns[:5])}"
+                            if len(available_columns) > 5:
+                                stderr += f" and {len(available_columns) - 5} more."
+                        except Exception:
+                            # If we can't load the dataframe, use a generic message
+                            stderr = f"Columns not found for '{missing_column}'. Please check your column names."
+        
         # Prepare the response
         response = {
             'figure': fig_json,

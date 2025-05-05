@@ -107,11 +107,23 @@ const EChartsVisualization: React.FC<EChartsVisualizationProps> = ({
     // Reset error state on new config
     setError(null);
 
+    // Log the chart config for debugging
+    console.log("EChartsVisualization: chartConfig received", {
+      hasConfig: !!chartConfig,
+      configType: typeof chartConfig,
+      loading
+    });
+
     // Initialize chart
     if (chartRef.current) {
       if (!chartInstance.current) {
         try {
-          chartInstance.current = echarts.init(chartRef.current);
+          // Initialize with renderer explicitly set to canvas for better compatibility
+          chartInstance.current = echarts.init(chartRef.current, null, {
+            renderer: 'canvas',
+            useDirtyRect: false // Disable dirty rect optimization for better compatibility
+          });
+          console.log("EChartsVisualization: Chart instance initialized");
         } catch (error) {
           console.error("Error initializing ECharts:", error);
           setError("Failed to initialize chart");
@@ -133,7 +145,7 @@ const EChartsVisualization: React.FC<EChartsVisualizationProps> = ({
           const safeChartConfig = sanitizeChartConfig(chartConfig);
 
           // Log the sanitized config for debugging
-          console.log("Sanitized chart config:", safeChartConfig);
+          console.log("EChartsVisualization: Sanitized chart config:", safeChartConfig);
 
           // Handle dataset if it exists
           if (safeChartConfig.dataset && typeof safeChartConfig.dataset === 'object') {
@@ -144,8 +156,17 @@ const EChartsVisualization: React.FC<EChartsVisualizationProps> = ({
             };
           }
 
-          // Apply the sanitized chart configuration
-          chartInstance.current.setOption(safeChartConfig, true); // Use safeChartConfig
+          // Ensure the chart has a minimum size before rendering
+          setTimeout(() => {
+            if (chartInstance.current) {
+              // Apply the sanitized chart configuration
+              chartInstance.current.setOption(safeChartConfig, true); // Use safeChartConfig
+              console.log("EChartsVisualization: Chart options set successfully");
+
+              // Force a resize after setting options to ensure proper rendering
+              chartInstance.current.resize();
+            }
+          }, 50);
 
         } catch (error) {
           // Log the original config for debugging if setOption fails
@@ -153,17 +174,23 @@ const EChartsVisualization: React.FC<EChartsVisualizationProps> = ({
           setError("Failed to render chart with provided configuration. Check console for details.");
         }
       } else if (loading && chartInstance.current) {
-        // Optionally show loading state on the chart itself
-        // chartInstance.current.showLoading();
+        // Show loading state on the chart itself
+        chartInstance.current.showLoading({
+          text: 'Loading chart data...',
+          color: '#4299e1',
+          textColor: '#4a5568',
+          maskColor: 'rgba(255, 255, 255, 0.8)',
+        });
       } else if (!loading && chartInstance.current) {
-        // chartInstance.current.hideLoading();
+        chartInstance.current.hideLoading();
       }
     }
 
-    // Handle resize
+    // Handle resize with debounce for better performance
     const handleResize = () => {
       if (chartInstance.current) {
         try {
+          console.log("EChartsVisualization: Resizing chart");
           chartInstance.current.resize();
         } catch (error) {
           console.error("Error resizing chart:", error);
@@ -172,13 +199,27 @@ const EChartsVisualization: React.FC<EChartsVisualizationProps> = ({
       }
     };
 
-    window.addEventListener('resize', handleResize);
+    // Debounced resize handler
+    let resizeTimeout: NodeJS.Timeout;
+    const debouncedResize = () => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(handleResize, 100);
+    };
+
+    window.addEventListener('resize', debouncedResize);
+
+    // Initial resize after a short delay to ensure container is properly sized
+    const initialResizeTimeout = setTimeout(handleResize, 200);
 
     // Cleanup
     return () => {
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('resize', debouncedResize);
+      clearTimeout(resizeTimeout);
+      clearTimeout(initialResizeTimeout);
+
       if (chartInstance.current) {
         try {
+          console.log("EChartsVisualization: Disposing chart instance");
           chartInstance.current.dispose();
         } catch (error) {
           console.error("Error disposing chart:", error);
@@ -188,6 +229,39 @@ const EChartsVisualization: React.FC<EChartsVisualizationProps> = ({
       }
     };
   }, [chartConfig, loading]); // Rerun effect if chartConfig or loading state changes
+
+  // Log the chart config for debugging
+  console.log('EChartsVisualization: Rendering with config', {
+    hasConfig: !!chartConfig,
+    configType: typeof chartConfig,
+    hasTitle: !!title,
+    loading,
+    error
+  });
+
+  // If there's no chart config, show a message
+  if (!chartConfig) {
+    return (
+      <div style={{ marginBottom: '20px' }}>
+        {title && <h3 style={{ textAlign: 'center', marginBottom: '10px' }}>{title}</h3>}
+        <div
+          style={{
+            height,
+            width,
+            border: '1px solid #f0f0f0',
+            borderRadius: '8px',
+            padding: '10px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: '#f9f9f9'
+          }}
+        >
+          <div style={{ color: '#666' }}>No chart configuration available</div>
+        </div>
+      </div>
+    );
+  }
 
   // If there's an error, show an error message
   if (error) {
@@ -203,7 +277,7 @@ const EChartsVisualization: React.FC<EChartsVisualizationProps> = ({
   }
 
   return (
-    <div style={{ marginBottom: '20px', position: 'relative' }}> {/* Added position relative for loading overlay */}
+    <div style={{ marginBottom: '20px', position: 'relative' }} id={`echarts-container-${Date.now()}`}>
       {title && <h3 style={{ textAlign: 'center', marginBottom: '10px' }}>{title}</h3>}
       <div className={loading ? 'opacity-50' : ''}>
         <div
@@ -216,6 +290,7 @@ const EChartsVisualization: React.FC<EChartsVisualizationProps> = ({
             padding: '10px',
             boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)',
           }}
+          data-testid="echarts-container"
         />
         {loading && (
           // Centered loading spinner overlay

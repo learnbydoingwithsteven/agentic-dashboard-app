@@ -352,23 +352,68 @@ def get_visualization_suggestions(data_path, user_prompt=None, analyst_model_id=
         }
         # Removed Code_Executor agent since ECharts runs in browser
 
-        # --- Load Dataset with flexible format detection ---
+        # --- Load Dataset with enhanced flexible format detection ---
         try:
             # Try different encodings and delimiters
             df = None
             error_messages = []
 
-            for encoding in ['latin-1', 'utf-8', 'cp1252']:
-                for delimiter in [';', ',', '\t']:
-                    try:
-                        df = pd.read_csv(data_path, encoding=encoding, delimiter=delimiter)
-                        print(f"Successfully loaded CSV with encoding={encoding}, delimiter={delimiter}")
+            # First try to determine file type from extension
+            file_extension = os.path.splitext(data_path)[1].lower()
+
+            # Try Excel formats first if extension suggests it
+            if file_extension in ['.xlsx', '.xls', '.xlsm', '.xlsb', '.odf', '.ods', '.odt']:
+                try:
+                    df = pd.read_excel(data_path)
+                    print(f"Successfully loaded Excel file based on extension {file_extension}")
+                except Exception as e:
+                    error_messages.append(f"Failed to load Excel file: {str(e)}")
+
+            # Try JSON if extension suggests it
+            elif file_extension in ['.json']:
+                try:
+                    df = pd.read_json(data_path)
+                    print("Successfully loaded JSON file")
+                except Exception as e:
+                    error_messages.append(f"Failed to load JSON file: {str(e)}")
+
+            # Try Parquet if extension suggests it
+            elif file_extension in ['.parquet']:
+                try:
+                    df = pd.read_parquet(data_path)
+                    print("Successfully loaded Parquet file")
+                except Exception as e:
+                    error_messages.append(f"Failed to load Parquet file: {str(e)}")
+
+            # Try Feather if extension suggests it
+            elif file_extension in ['.feather']:
+                try:
+                    df = pd.read_feather(data_path)
+                    print("Successfully loaded Feather file")
+                except Exception as e:
+                    error_messages.append(f"Failed to load Feather file: {str(e)}")
+
+            # Try HDF5 if extension suggests it
+            elif file_extension in ['.h5', '.hdf5']:
+                try:
+                    df = pd.read_hdf(data_path)
+                    print("Successfully loaded HDF5 file")
+                except Exception as e:
+                    error_messages.append(f"Failed to load HDF5 file: {str(e)}")
+
+            # Try CSV with different encodings and delimiters if still not loaded or for CSV-like extensions
+            if df is None:
+                for encoding in ['latin-1', 'utf-8', 'cp1252', 'iso-8859-1']:
+                    for delimiter in [';', ',', '\t', '|']:
+                        try:
+                            df = pd.read_csv(data_path, encoding=encoding, delimiter=delimiter)
+                            print(f"Successfully loaded CSV with encoding={encoding}, delimiter={delimiter}")
+                            break
+                        except Exception as e:
+                            error_messages.append(f"Failed with encoding={encoding}, delimiter={delimiter}: {str(e)}")
+                            continue
+                    if df is not None:
                         break
-                    except Exception as e:
-                        error_messages.append(f"Failed with encoding={encoding}, delimiter={delimiter}: {str(e)}")
-                        continue
-                if df is not None:
-                    break
 
             # If all attempts failed, try one more time with pandas defaults
             if df is None:
@@ -376,10 +421,10 @@ def get_visualization_suggestions(data_path, user_prompt=None, analyst_model_id=
                     df = pd.read_csv(data_path)
                     print("Successfully loaded CSV with pandas defaults")
                 except Exception as e:
-                    # Try Excel format as a last resort
+                    # Try Excel format as a last resort regardless of extension
                     try:
                         df = pd.read_excel(data_path)
-                        print("Successfully loaded Excel file")
+                        print("Successfully loaded Excel file as last resort")
                     except Exception as excel_e:
                         # If we still can't load the file, raise an error with all the attempts
                         error_detail = "\n".join(error_messages)
@@ -412,19 +457,37 @@ def get_visualization_suggestions(data_path, user_prompt=None, analyst_model_id=
             # Get some basic info for the agents
             num_rows = len(df)
             columns = df.columns.tolist()
-            data_head = df.head().to_string()
 
-            # Add information about numeric columns
-            data_sample_for_prompt = f"""Dataset path: {data_path}
-Number of rows: {num_rows}
-Columns: {columns}
-Numeric columns: {numeric_columns}
+            # Check if we're using Groq to further limit token usage
+            use_groq = not (os.getenv("USE_OLLAMA") == "true")
+            api_key = os.getenv("GROQ_API_KEY")
+            is_groq = use_groq and api_key and api_key != "dummy_key_for_ollama"
 
-First 5 rows:
+            # Limit rows based on model provider
+            if is_groq:
+                # For Groq, be extremely conservative with tokens
+                data_head = df.head(3).to_string(max_rows=3, max_cols=5)  # Limit to 3 rows and 5 columns for Groq
+                # Create a minimal summary for Groq
+                data_sample_for_prompt = f"""Rows: {num_rows}
+Columns: {columns[:10]}... (truncated)
+Numeric columns: {numeric_columns[:5]}... (truncated)
+
+Sample (3 rows):
+{data_head}
+"""
+            else:
+                # For Ollama, also be more concise
+                data_head = df.head(5).to_string(max_rows=5, max_cols=8)  # Limit to 5 rows and 8 columns for Ollama
+                # Create a more concise summary for Ollama
+                data_sample_for_prompt = f"""Rows: {num_rows}
+Columns: {columns[:15]}... (truncated)
+Numeric columns: {numeric_columns[:8]}... (truncated)
+
+Sample (5 rows):
 {data_head}
 
-Dataset summary:
-{df.describe().to_string()}
+Brief summary:
+{df.describe().head(3).to_string(max_cols=5)}
 """
         except Exception as e:
             error_message = f"Error loading dataset: {str(e)}"
@@ -502,223 +565,209 @@ Dataset summary:
             }
 
         # Define Agents
+        # Check if we're using Groq to further limit token usage
+        use_groq = not (os.getenv("USE_OLLAMA") == "true")
+        api_key = os.getenv("GROQ_API_KEY")
+        is_groq = use_groq and api_key and api_key != "dummy_key_for_ollama"
+
         # Create a safe system message without f-strings
         try:
-            analyst_system_message = """You are an expert data analyst specializing in data visualization and insights.
+            if is_groq:
+                # For Groq, use a more concise system message to save tokens
+                analyst_system_message = """You are an expert data analyst specializing in data visualization.
+Your task is to analyze the provided dataset and identify an insightful visualization.
+"""
+                # Add minimal dataset-specific information
+                analyst_system_message += f"Dataset path: {data_path}\n"
+                analyst_system_message += f"Columns: {columns}\n"
+            else:
+                # For Ollama, we can use the original system message
+                analyst_system_message = """You are an expert data analyst specializing in data visualization and insights.
 Your task is to analyze the provided dataset and identify the most insightful visualizations.
 Consider the columns provided in the data.
 """
-            # Add dataset-specific information safely
-            analyst_system_message += f"Dataset path: {data_path}\n"
-            analyst_system_message += f"Columns: {columns}\n"
-            analyst_system_message += f"Data sample:\n{data_head}\n"
+                # Add dataset-specific information safely
+                analyst_system_message += f"Dataset path: {data_path}\n"
+                analyst_system_message += f"Columns: {columns}\n"
+                analyst_system_message += f"Data sample:\n{data_head}\n"
         except Exception as e:
             print(f"Warning: Error formatting analyst system message: {e}")
             # Fallback to a simpler message without potentially problematic formatting
-            analyst_system_message = """You are an expert data analyst specializing in data visualization and insights.
-Your task is to analyze the provided dataset and identify the most insightful visualizations.
+            analyst_system_message = """You are an expert data analyst specializing in data visualization.
+Your task is to analyze the provided dataset and identify an insightful visualization.
 Consider the columns provided in the data sample."""
+
+        # Check if we're using Groq to further limit token usage
+        use_groq = not (os.getenv("USE_OLLAMA") == "true")
+        api_key = os.getenv("GROQ_API_KEY")
+        is_groq = use_groq and api_key and api_key != "dummy_key_for_ollama"
+
+        # Create appropriate core task message based on model provider
+        if is_groq:
+            # For Groq, use a more concise core task message to save tokens
+            core_task_message = """
+
+CORE TASK: Suggest ONE clear visualization specification for the Visualization_Coder.
+
+INSTRUCTIONS:
+1. Use EXACT column names from the 'Columns' section.
+2. Focus ONLY on the most important numerical relationships in the data.
+3. Skip lengthy analysis and explanations.
+4. Include ONLY:
+   - Chart Type (bar, line, pie, scatter)
+   - Categorical Column (x-axis/slices)
+   - Numerical Column (y-axis/values)
+   - Simple Data Processing (group by, sum)
+   - Brief Title
+
+EXAMPLE:
+"Visualization:
+- Chart Type: Bar chart
+- Categorical Column: 'Region'
+- Numerical Column: 'Total Sales'
+- Data Processing: Group by 'Region', Sum 'Total Sales'
+- Title: 'Total Sales by Region'"
+
+Provide ONLY the specification with NO additional commentary.
+"""
+        else:
+            # For Ollama, use a more concise message as well
+            core_task_message = """
+
+CORE TASK: Suggest ONE clear visualization specification for the Visualization_Coder.
+
+INSTRUCTIONS:
+1. Use EXACT column names from the 'Columns' section.
+2. Focus ONLY on the most important numerical relationships in the data.
+3. Skip lengthy analysis and explanations.
+4. Include ONLY:
+   - Chart Type (bar, line, pie, scatter)
+   - Categorical Column (x-axis/slices)
+   - Numerical Column (y-axis/values)
+   - Simple Data Processing (group by, sum)
+   - Brief Title
+
+EXAMPLE:
+"Visualization:
+- Chart Type: Bar chart
+- Categorical Column: 'Region'
+- Numerical Column: 'Total Sales'
+- Data Processing: Group by 'Region', Sum 'Total Sales'
+- Title: 'Total Sales by Region'"
+
+Provide ONLY the specification with NO additional commentary.
+"""
 
         data_analyst = autogen.AssistantAgent(
             name="Data_Analyst",
-            system_message=analyst_system_message + """
-
-IMPORTANT INSTRUCTIONS:
-1. Focus on providing diverse insights that reveal meaningful patterns in the data
-2. Prioritize visualizations that show:
-   - Distributions and patterns across categorical variables
-   - Comparisons between different numeric variables
-   - Trends or patterns in the data
-   - Relationships between different metrics
-   - Outliers or anomalies in the data
-
-3. For each visualization, provide DETAILED specifications:
-   - The exact column names to use (must match the dataset exactly)
-   - Precise data transformations with specific columns and operations
-   - Appropriate chart type with justification
-   - Descriptive titles and axis labels in appropriate language
-   - Sorting and filtering criteria if applicable
-   - Color schemes and visual elements recommendations
-
-4. Data Processing Instructions:
-   - Be explicit about grouping: "Group by 'Category Column'"
-   - Specify exact aggregation functions: "Sum 'Numeric Column' for each group"
-   - Include sorting: "Sort in descending order by the aggregated value"
-   - Mention filtering if needed: "Filter to include only the top 10 categories by total"
-   - Suggest data transformations: "Calculate the ratio between 'Column A' and 'Column B'"
-
-5. Visualization Enhancement Suggestions:
-   - Recommend appropriate number formatting (e.g., thousands separators for currency)
-   - Suggest axis label rotations for better readability
-   - Recommend appropriate chart dimensions and layouts
-   - Suggest tooltip content and formatting
-   - Recommend legend positioning and styling
-
-6. Data Quality Considerations:
-   - Identify and suggest handling for missing values
-   - Recommend appropriate data type conversions if needed
-   - Suggest filtering out outliers if they distort the visualization
-   - Recommend appropriate binning for continuous variables if needed
-   - Suggest handling for categorical variables with too many unique values
-
-EXAMPLE FORMAT:
-"Visualization 1: Distribution of [Metric] by [Category]
-- Data Processing:
-  * Group by: '[Category Column]'
-  * Aggregate: Sum '[Metric Column]' for each category
-  * Sort: Descending by total '[Metric Column]'
-  * Limit: Include only top 8 categories, group others as 'Other'
-- Chart Type: Bar chart (vertical) with data labels
-- Title: 'Distribution of [Metric] by [Category]'
-- X-axis: Category names (rotated 45 degrees for readability)
-- Y-axis: '[Metric] ([Unit])' with thousand separators
-- Colors: Blue gradient for bars
-- Tooltip: Show category name and exact value with thousand separators
-- Insight: Reveals which categories have the highest values, highlighting disparities in distribution"
-
-Remember, the Visualization_Coder will implement your suggestions using Plotly, so be as specific as possible about data processing and visual elements. Adapt your recommendations to the specific dataset provided.
-""",
+            system_message=analyst_system_message + core_task_message,
             llm_config=analyst_llm_config, # Use analyst specific config
         )
 
+        # Check if we're using Groq to further limit token usage
+        use_groq = not (os.getenv("USE_OLLAMA") == "true")
+        api_key = os.getenv("GROQ_API_KEY")
+        is_groq = use_groq and api_key and api_key != "dummy_key_for_ollama"
+
+        # Create appropriate system message for visualization coder based on model provider
+        if is_groq:
+            # For Groq, use a more concise system message to save tokens
+            coder_system_message = """You are an expert Python coder specializing in Plotly visualizations.
+
+CORE TASK: Write Python code using Plotly to generate the visualization specified by the Data_Analyst.
+
+INSTRUCTIONS:
+1. Follow the analyst's specifications exactly.
+2. Use exact column names specified.
+3. Assume `df` is already loaded.
+4. Use pandas and plotly.express.
+5. Check if columns exist before using them.
+6. Create clean, minimal code with no comments.
+7. Assign final figure to variable named `fig`.
+
+EXAMPLE:
+```python
+import pandas as pd
+import plotly.express as px
+
+cat_col = 'Region'
+num_col = 'Sales'
+
+if cat_col not in df.columns or num_col not in df.columns:
+    fig = px.bar(title="Error: Columns not found")
+else:
+    processed_df = df.groupby(cat_col)[num_col].sum().reset_index()
+    processed_df = processed_df.sort_values(num_col, ascending=False)
+    fig = px.bar(
+        processed_df,
+        x=cat_col,
+        y=num_col,
+        title='Sales by Region'
+    )
+```
+
+Provide only the Python code block with no explanation.
+"""
+        else:
+            # For Ollama, use a more concise system message as well
+            coder_system_message = """You are an expert Python coder specializing in Plotly visualizations.
+
+CORE TASK: Write Python code using Plotly to generate the visualization specified by the Data_Analyst.
+
+INSTRUCTIONS:
+1. Follow the analyst's specifications exactly.
+2. Use exact column names specified.
+3. Assume `df` is already loaded.
+4. Use pandas and plotly.express.
+5. Check if columns exist before using them.
+6. Create clean, minimal code with no comments.
+7. Assign final figure to variable named `fig`.
+
+EXAMPLE:
+```python
+import pandas as pd
+import plotly.express as px
+
+cat_col = 'Region'
+num_col = 'Sales'
+
+if cat_col not in df.columns or num_col not in df.columns:
+    fig = px.bar(title="Error: Columns not found")
+else:
+    processed_df = df.groupby(cat_col)[num_col].sum().reset_index()
+    processed_df = processed_df.sort_values(num_col, ascending=False)
+    fig = px.bar(
+        processed_df,
+        x=cat_col,
+        y=num_col,
+        title='Sales by Region'
+    )
+```
+
+Provide only the Python code block with no explanation.
+"""
+
         visualization_coder = autogen.AssistantAgent(
             name="Visualization_Coder",
-            system_message="""You are an expert in creating data visualizations using Python with Plotly.
-
-            IMPORTANT: Your task is to write Python code that generates Plotly visualizations based on the dataset and the Data Analyst's specifications.
-
-            VISUALIZATION BEST PRACTICES:
-            1. Always use REAL DATA from the dataset - never use placeholder or dummy data
-            2. Process the data appropriately (grouping, aggregation, sorting) as specified by the Data Analyst
-            3. Choose appropriate chart types based on the data characteristics and analysis goals
-            4. Use clear, descriptive titles and axis labels in the appropriate language
-            5. Include tooltips with formatted values for better user interaction
-            6. Use appropriate color schemes that are visually appealing and accessible
-            7. Format numbers with thousand separators and appropriate decimal places
-            8. Ensure visualizations are not cluttered - limit categories if needed
-            9. Add grid configurations to ensure proper spacing and layout
-            10. Include legends when multiple series are present
-
-            LAYOUT AND STYLING ENHANCEMENTS:
-            1. Set appropriate titles and use proper font sizes
-            2. Configure margins and padding for better layout
-            3. Rotate axis labels when needed for better readability
-            4. Add hover text for important values
-            5. Format tooltips to show relevant information
-            6. Use appropriate chart dimensions
-            7. Position legends optimally
-            8. Use color scales appropriate for the data type
-
-            DATA HANDLING REQUIREMENTS:
-            1. Always check if columns exist before using them
-            2. Handle missing or invalid data gracefully
-            3. Use try/except blocks to handle potential errors
-            4. Verify that numeric columns are actually numeric before operations
-            5. For categorical data, limit to top N categories if there are too many
-            6. Always sort data appropriately for better visualization
-            7. Use appropriate aggregation functions (sum, mean, count, etc.)
-            8. Format dates properly if working with time series data
-
-            TECHNICAL REQUIREMENTS:
-            1. Write complete Python code that loads the data and creates a Plotly figure
-            2. Use pandas for data manipulation (the dataframe is already loaded as 'df')
-            3. Use plotly.express (px) for simple charts and plotly.graph_objects (go) for more complex visualizations
-            4. Always assign your final figure to a variable named 'fig'
-            5. Avoid using f-strings with dictionary keys or complex expressions
-            6. Use proper dictionary syntax for labels and other configurations
-            7. Ensure all dictionary keys are properly quoted strings
-            8. Use simple string formatting for axis labels and titles
-            9. Include all necessary imports at the top of your code
-            10. Add comments to explain key data processing steps
-            11. Format your code properly with consistent indentation
-
-            Example of well-formatted Plotly code:
-            ```python
-            # Import necessary libraries
-            import pandas as pd
-            import plotly.express as px
-            import plotly.graph_objects as go
-            import numpy as np
-
-            # Load and process the data
-            # Note: In the actual execution, 'df' is already loaded for you
-            # This is just for demonstration
-            # df = pd.read_csv(data_path)
-
-            # Group data by province and calculate total commitment
-            province_totals = df.groupby('Provincia competente')['Impegno totale'].sum().reset_index()
-
-            # Sort by total commitment in descending order
-            province_totals = province_totals.sort_values('Impegno totale', ascending=False)
-
-            # Take top 10 provinces
-            top_provinces = province_totals.head(10)
-
-            # Create the bar chart
-            fig = px.bar(
-                top_provinces,
-                x='Provincia competente',
-                y='Impegno totale',
-                title='Distribuzione dell\'Impegno Totale per Provincia',
-                labels={
-                    'Provincia competente': 'Provincia',
-                    'Impegno totale': 'Impegno Totale (EUR)'
-                },
-                color='Impegno totale',
-                color_continuous_scale='Blues',
-                text='Impegno totale'
-            )
-
-            # Customize layout
-            fig.update_layout(
-                title_font_size=20,
-                xaxis_tickangle=-45,
-                yaxis=dict(
-                    title_font_size=16,
-                    tickformat=',d'
-                ),
-                margin=dict(l=50, r=50, t=80, b=100),
-                coloraxis_showscale=False
-            )
-
-            # Format text labels
-            fig.update_traces(
-                texttemplate='%{text:,.0f}',
-                textposition='outside'
-            )
-            ```
-
-            RESPONSE FORMAT:
-            All code MUST be enclosed in a single ```python block.
-            The code MUST be a complete, runnable Python script that generates a Plotly visualization.
-            The code MUST assign the Plotly figure to a variable named 'fig'.
-            Do NOT include any comments outside the ```python block.
-
-            ```python
-            # Your complete Python code here
-            ```
-
-            IMPORTANT: Always ensure your code uses REAL DATA from the dataset, not placeholder values. Remember that the dataframe is already loaded as 'df' in the execution environment.""",
+            system_message=coder_system_message,
             llm_config=coder_llm_config, # Use coder specific config
         )
 
         user_proxy = autogen.UserProxyAgent(
             name="User_Proxy",
             human_input_mode="NEVER",
-            # Let GroupChatManager handle termination logic based on speaker transitions
-            # max_consecutive_auto_reply=2, # Manager controls this
-            is_termination_msg=lambda x: "```python" in x.get("content", "") and "fig = " in x.get("content", ""), # Terminate when coder provides Plotly code
+            # Terminate immediately when coder provides any Python code
+            is_termination_msg=lambda x: "```python" in x.get("content", ""),
             code_execution_config=False,
-            system_message="You are a proxy for the human user. Your role is to request visualizations and approve them when they look good. When the Visualization_Coder provides complete Python code with Plotly visualizations, thank them and end the conversation.",
+            system_message="You are a proxy for the human user. Your role is to request visualizations. When the Visualization_Coder provides Python code, end the conversation immediately.",
         )
 
         # --- Group Chat Setup ---
         groupchat = autogen.GroupChat(
             agents=[user_proxy, data_analyst, visualization_coder],
             messages=[],
-            max_round=10, # Limit rounds to prevent infinite loops
-            # Define speaker selection logic if needed, default is round robin
-            # speaker_selection_method="auto"
+            max_round=3, # Limit rounds to keep conversation short and focused
+            speaker_selection_method="round_robin" # Ensure predictable turn-taking
         )
         manager = autogen.GroupChatManager(
             groupchat=groupchat,
@@ -784,35 +833,60 @@ Remember, the Visualization_Coder will implement your suggestions using Plotly, 
         groupchat.on_new_message = on_new_message
 
         # --- Chat Initiation ---
+        # Check if we're using Groq to further limit token usage
+        use_groq = not (os.getenv("USE_OLLAMA") == "true")
+        api_key = os.getenv("GROQ_API_KEY")
+        is_groq = use_groq and api_key and api_key != "dummy_key_for_ollama"
+
         # Create initial request message safely without complex f-strings
         try:
-            initial_request = "Analyze the dataset and provide 3 insightful visualizations using Python with Plotly.\n"
-            initial_request += f"Dataset path: {data_path}\n"
-            initial_request += "Here is a sample of the data:\n"
-            initial_request += data_sample_for_prompt + "\n\n"
-            initial_request += """Data Analyst: Please analyze this dataset and suggest 3 insightful visualizations with clear specifications.
-Visualization Coder: Once you receive the specifications, create Python code with Plotly that generates the visualizations."""
+            if is_groq:
+                # For Groq, use a more concise prompt to save tokens
+                initial_request = "Create 1 visualization for this dataset using Plotly.\n"
+                initial_request += f"Dataset path: {data_path}\n"
+                initial_request += "Data sample:\n"
+                initial_request += data_sample_for_prompt + "\n\n"
+                initial_request += """Data Analyst: Suggest 1 clear visualization.
+Visualization Coder: Create Python code with Plotly based on the specification."""
+            else:
+                # For Ollama, use a more concise prompt as well
+                initial_request = "Create 1 visualization for this dataset using Plotly.\n"
+                initial_request += f"Dataset path: {data_path}\n"
+                initial_request += "Data sample:\n"
+                initial_request += data_sample_for_prompt + "\n\n"
+                initial_request += """Data Analyst: Suggest 1 clear visualization.
+Visualization Coder: Create Python code with Plotly based on the specification."""
         except Exception as e:
             print(f"Warning: Error formatting initial request: {e}")
             # Fallback to a simpler message
-            initial_request = """Analyze the dataset and provide 3 insightful visualizations using Python with Plotly.
-Data Analyst: Please analyze this dataset and suggest 3 insightful visualizations with clear specifications.
-Visualization Coder: Once you receive the specifications, create Python code with Plotly that generates the visualizations."""
+            initial_request = """Create a visualization for this dataset using Plotly.
+Data Analyst: Suggest a visualization.
+Visualization Coder: Create Python code with Plotly."""
 
         # Create follow-up request message safely without complex f-strings
         try:
-            follow_up_request = f"The user asks for a specific visualization: \"{user_prompt}\"\n"
-            follow_up_request += f"Analyze this request based on the dataset at {data_path} and create the visualization.\n"
-            follow_up_request += "Here is a sample of the data:\n"
-            follow_up_request += data_sample_for_prompt + "\n\n"
-            follow_up_request += """Data Analyst: Please analyze this specific request and suggest how to visualize it effectively.
-Visualization Coder: Once you receive the specifications, create Python code with Plotly that generates the visualization."""
+            if is_groq:
+                # For Groq, use a more concise prompt to save tokens
+                follow_up_request = f"Create visualization: \"{user_prompt}\"\n"
+                follow_up_request += f"Dataset: {data_path}\n"
+                follow_up_request += "Data sample:\n"
+                follow_up_request += data_sample_for_prompt + "\n\n"
+                follow_up_request += """Data Analyst: Suggest visualization for this request.
+Visualization Coder: Create Python code with Plotly."""
+            else:
+                # For Ollama, use a more concise prompt as well
+                follow_up_request = f"Create visualization: \"{user_prompt}\"\n"
+                follow_up_request += f"Dataset: {data_path}\n"
+                follow_up_request += "Data sample:\n"
+                follow_up_request += data_sample_for_prompt + "\n\n"
+                follow_up_request += """Data Analyst: Suggest visualization for this request.
+Visualization Coder: Create Python code with Plotly."""
         except Exception as e:
             print(f"Warning: Error formatting follow-up request: {e}")
             # Fallback to a simpler message
-            follow_up_request = f"The user asks for a specific visualization: \"{user_prompt}\"\n"
-            follow_up_request += """Data Analyst: Please analyze this specific request and suggest how to visualize it effectively.
-Visualization Coder: Once you receive the specifications, create Python code with Plotly that generates the visualization."""
+            follow_up_request = f"Create visualization: \"{user_prompt}\"\n"
+            follow_up_request += """Data Analyst: Suggest a visualization.
+Visualization Coder: Create Python code with Plotly."""
 
         # Determine the message to initiate the chat
         chat_init_message = follow_up_request if user_prompt else initial_request
@@ -1028,18 +1102,50 @@ Visualization Coder: Once you receive the specifications, create Python code wit
 
             # Create enhanced default visualizations based on the dataset with real data
             try:
-                # Try to load the dataset with flexible format detection
+                # Try to load the dataset with enhanced flexible format detection
                 df = None
-                for encoding in ['latin-1', 'utf-8', 'cp1252']:
-                    for delimiter in [';', ',', '\t']:
-                        try:
-                            df = pd.read_csv(data_path, encoding=encoding, delimiter=delimiter)
-                            print(f"Default viz: Successfully loaded CSV with encoding={encoding}, delimiter={delimiter}")
+                error_messages = []
+
+                # First try to determine file type from extension
+                file_extension = os.path.splitext(data_path)[1].lower()
+
+                # Try Excel formats first if extension suggests it
+                if file_extension in ['.xlsx', '.xls', '.xlsm', '.xlsb', '.odf', '.ods', '.odt']:
+                    try:
+                        df = pd.read_excel(data_path)
+                        print(f"Default viz: Successfully loaded Excel file based on extension {file_extension}")
+                    except Exception as e:
+                        error_messages.append(f"Failed to load Excel file: {str(e)}")
+
+                # Try JSON if extension suggests it
+                elif file_extension in ['.json']:
+                    try:
+                        df = pd.read_json(data_path)
+                        print("Default viz: Successfully loaded JSON file")
+                    except Exception as e:
+                        error_messages.append(f"Failed to load JSON file: {str(e)}")
+
+                # Try Parquet if extension suggests it
+                elif file_extension in ['.parquet']:
+                    try:
+                        df = pd.read_parquet(data_path)
+                        print("Default viz: Successfully loaded Parquet file")
+                    except Exception as e:
+                        error_messages.append(f"Failed to load Parquet file: {str(e)}")
+
+                # Try CSV with different encodings and delimiters if still not loaded or for CSV-like extensions
+                if df is None:
+                    for encoding in ['latin-1', 'utf-8', 'cp1252', 'iso-8859-1']:
+                        for delimiter in [';', ',', '\t', '|']:
+                            try:
+                                df = pd.read_csv(data_path, encoding=encoding, delimiter=delimiter)
+                                print(f"Default viz: Successfully loaded CSV with encoding={encoding}, delimiter={delimiter}")
+                                break
+                            except Exception as e:
+                                error_messages.append(f"Failed with encoding={encoding}, delimiter={delimiter}: {str(e)}")
+                                continue
+                        if df is not None:
                             break
-                        except Exception:
-                            continue
-                    if df is not None:
-                        break
 
                 # If all attempts failed, try with pandas defaults
                 if df is None:
@@ -1049,7 +1155,7 @@ Visualization Coder: Once you receive the specifications, create Python code wit
                     except Exception:
                         try:
                             df = pd.read_excel(data_path)
-                            print("Default viz: Successfully loaded Excel file")
+                            print("Default viz: Successfully loaded Excel file as last resort")
                         except Exception as e:
                             print(f"Default viz: Failed to load dataset: {str(e)}")
                             # Create a minimal dataset for testing
