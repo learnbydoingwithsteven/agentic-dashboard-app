@@ -1,4 +1,18 @@
 # backend/src/main.py
+#
+# Copyright 2024 Steven Wang, owner of "Learn by Doing with Steven" YouTube channel
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import sys
 import os
@@ -279,10 +293,10 @@ def stream_admin_logs():
     def generate():
         # Send the current logs as initial data
         yield f"data: {json.dumps({'logs': agent_logs, 'available_models': AVAILABLE_MODELS})}\n\n"
-        
+
         # Keep track of the last log count we sent
         last_count = len(agent_logs)
-        
+
         while True:
             # Check if there are new logs
             current_count = len(agent_logs)
@@ -290,13 +304,13 @@ def stream_admin_logs():
                 # Send only the new logs
                 yield f"data: {json.dumps({'logs': agent_logs[last_count:], 'type': 'append'})}\n\n"
                 last_count = current_count
-            
+
             # Send a heartbeat every 15 seconds to keep the connection alive
             yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': datetime.now().isoformat()})}\n\n"
-            
+
             # Sleep to avoid excessive CPU usage
             time.sleep(1)
-    
+
     response = app.response_class(
         response=generate(),
         status=200,
